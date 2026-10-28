@@ -10,6 +10,14 @@ Owner uses it daily on multiple Macs with 3 monitors and a Magic Mouse; Zen's to
   `scripts/*.uc.js` go into `<profile>/chrome/`.
 - Each `.uc.js` runs with chrome privileges in the window(s) its `@include` header names
   (`main` = every browser window; `pip-swipe` targets the PiP player window).
+- `bin/cranez` (installed by the Homebrew tap `ivanmorales/homebrew-tap`) keeps a managed checkout
+  in `~/Library/Application Support/cranez/repo`, resets it to `origin/main` on `cranez setup`,
+  and forwards every command to that checkout's `cranez.sh` (with `CRANEZ_CLI_NAME=cranez`, so
+  messages say `cranez <cmd>`). `CRANEZ_HOME=<clone>` uses a dev clone as-is. Keep `bin/cranez`
+  thin: logic belongs in `cranez.sh`, which ships with `setup`, not with a brew release.
+- Prefs: `zen-prefs.js` is defaults only (`install` never overwrites an existing pref); tuned
+  values travel via Firefox Sync, which `install` turns on for every pref documented in the
+  script headers (minus `*.debug`, `devbar.visible`, `tabexpiry.run_now`).
 - After changing a script on a Mac: copy it in (or `./cranez.sh install` with Zen quit), then
   `about:support` → Clear Startup Cache. Debug in the Browser Console (⌘⇧J).
 
@@ -32,11 +40,14 @@ Owner uses it daily on multiple Macs with 3 monitors and a Magic Mouse; Zen's to
 
 `bash tests/run.sh` (CI runs it too). Covers: syntax of all scripts, shellcheck, `pip-swipe`
 gestures on a fake 3-monitor desktop (fling caps, monitor hops, corner snap, never off screen),
-`tab-expiry` keep/close rules, and the installer end to end on a fake Mac layout.
+`tab-expiry` keep/close rules, the installer end to end on a fake Mac layout, and `cranez.sh
+setup` + `bin/cranez` on a shared fake Mac (`tests/fake-mac.sh`: stubbed `brew`, `open`,
+`osascript`, `launchctl`, an App-Management-blocking `cp`, a local bare repo as GitHub).
 Add a test case whenever you change behaviour those suites cover.
 
 Not covered (verify manually in Zen): anything touching real Firefox internals, macOS cursor
-calls (js-ctypes), App Management/launchd, real DevTools.
+calls (js-ctypes), App Management/launchd, real DevTools, Zen's first-run profile creation and
+the Gatekeeper prompt, Firefox Sync carrying cranez prefs, a real `brew install` from the tap.
 
 ## Firefox/Zen internals each script depends on (first suspects after a Zen update)
 
@@ -58,6 +69,10 @@ calls (js-ctypes), App Management/launchd, real DevTools.
 - **dev-bar**: devtools loader → `gDevTools.showToolboxForTab / getToolboxForTab /
   closeToolboxForTab`, `toolbox.nodePicker`; reserved XUL `<key>` for ^D; positions a fixed bar
   over the selected `.browserStack` and pads it via `[devbar-pushed]`.
+- **cranez.sh setup / prefs sync**: Homebrew cask `zen`, bundle id `app.zen-browser.zen`
+  (AppleScript quit after first-run profile creation), `profiles.ini` `[Install…] Default=`,
+  Firefox Sync prefs `services.sync.prefs.sync.<name>` and
+  `services.sync.prefs.dangerously_allow_arbitrary`, `<profile>/signedInUser.json` (signed in).
 
 ## Decisions already made (don't redo)
 
@@ -67,5 +82,7 @@ calls (js-ctypes), App Management/launchd, real DevTools.
 - dev-bar v1 was inserted into `.browserContainer`; Zen lays that out differently, so v2 uses a
   fixed-position bar measured to the page area plus padding on `.browserStack`.
 - The "Little Zen" Sine mod that inspired little-arc no longer exists; this is our own version.
+- Distribution is a Homebrew tap; tuned prefs travel via Firefox Sync, not git (no capture/push
+  from user Macs); Zen's quarantine flag is never stripped (the owner clicks Gatekeeper's Open).
 - Extensions can't do most of this (can't start PiP, move windows, catch external links, or open
   DevTools), which is why it's privileged scripts plus a loader.

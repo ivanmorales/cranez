@@ -17,51 +17,95 @@ inside Zen with full browser privileges, which is what lets them do things an ex
 
 ## Install
 
-1. Install Zen, open it once, quit it (⌘Q).
-2. `./cranez.sh install`
-3. If macOS blocks writing into Zen.app: System Settings → Privacy & Security → App Management →
-   turn on your terminal, reopen the terminal, run `./cranez.sh loader`.
+On a Mac with [Homebrew](https://brew.sh):
+
+```
+brew install ivanmorales/tap/cranez
+cranez setup
+```
+
+`cranez setup` installs Zen if it's missing, opens it once so it creates its profile (click
+**Open** if macOS asks; Zen quits by itself afterwards), installs the loader, scripts and prefs,
+and turns on the update watcher. If Zen is open, it waits for you to quit it.
+
+Two things only you can do, once per Mac:
+
+- If macOS blocks writing into Zen.app, setup opens System Settings → Privacy & Security →
+  App Management: turn on your terminal, reopen the terminal, run `cranez setup` again.
+- Sign in to your Mozilla account in Zen, so your cranez prefs sync (setup reminds you).
 
 Open Zen. The Browser Console (⌘⇧J) shows a `loaded` line for each script.
 
-## After a Zen update
+## Updating
+
+Run `cranez setup` again any time: it pulls the latest scripts from GitHub and reinstalls them.
+`brew upgrade cranez` is only needed when the `cranez` command itself changes, which is rare.
 
 Zen updates replace the app and remove the loader from it. Zen keeps working; the scripts just
-stop loading until you run:
-
-```
-./cranez.sh loader
-```
-
-and restart Zen. Scripts and prefs live in your profile and survive updates.
-`./cranez.sh watch-on` adds a background helper that notices updates and either restores the
-loader or sends you a notification.
+stop loading. The update watcher notices, re-adds the loader if macOS allows it, and otherwise
+sends a notification; then run `cranez loader` and restart Zen.
 
 ## Prefs
 
-Every script has optional prefs (in `about:config`), documented at the top of each file.
-`zen-prefs.js` holds the values `install` writes into Zen; they're applied once per install,
-so later tweaks in `about:config` stick. To carry tuned values to another Mac:
+Every script has optional prefs (in `about:config`), documented at the top of each file. Tuned
+values travel between your Macs through your Mozilla account: setup turns on Firefox Sync for
+every cranez pref (except `*.debug`, `devbar.visible` and `tabexpiry.run_now`, which are per-Mac).
+Tune a pref on one Mac and it shows up on the others after the next sync.
 
-```
-./cranez.sh capture      # quit Zen first; saves arcpip.* arclittle.* pipswipe.* tabexpiry.* devbar.*
-git commit -am "prefs"
-# other Mac:
-./cranez.sh install
-```
+`zen-prefs.js` only holds defaults for a brand-new Mac: setup adds a pref from it only if the
+profile doesn't have that pref yet, so it never overwrites anything you've tuned. To change the
+defaults, see Development.
 
 ## Commands
 
 | | |
 |---|---|
-| `install` | loader + scripts + prefs (quit Zen first) |
-| `loader` | re-add the loader after a Zen update |
-| `status` | what's installed / out of date |
-| `capture` | save tuned prefs into `zen-prefs.js` |
-| `watch-on` / `watch-off` | background update helper |
-| `uninstall` | remove everything cranez added |
+| `cranez setup` | everything; run again to update |
+| `cranez status` | what's installed / out of date |
+| `cranez loader` | re-add the loader after a Zen update |
+| `cranez watch-on` / `watch-off` | background update helper |
+| `cranez uninstall` | remove everything cranez added |
+| `cranez --version` | version of the `cranez` command |
 
 Overrides: `ZEN_APP=/path/to/Zen.app`, `ZEN_PROFILE=/path/to/profile`.
+
+## Moving a Mac that already runs cranez from a clone
+
+Once per Mac:
+
+1. Sign in to your Mozilla account in Zen, on every Mac.
+2. Start with the Mac whose cranez prefs are tuned best: `brew install ivanmorales/tap/cranez`,
+   `cranez setup`, restart Zen, and let it sync. That Mac uploads its values first.
+3. On each other Mac, the same commands. Setup doesn't overwrite the prefs it already has, and
+   Sync then replaces them with the uploaded values.
+4. Setup moves the update watcher to its own copy and says so. Delete the old clone if you don't
+   develop in it.
+
+## Development
+
+`cranez` keeps its own copy of this repo in `~/Library/Application Support/cranez/repo` and
+resets it to `origin/main` on every setup; don't edit it. To work on cranez, use a clone:
+
+```
+CRANEZ_HOME=~/dev/tools/cranez cranez setup   # use the clone as-is (no fetch, no reset)
+./cranez.sh install                             # or run the engine directly from the clone
+```
+
+To change the defaults in `zen-prefs.js`: in the clone, tune the prefs in about:config, quit Zen,
+run `./cranez.sh capture`, then commit and push.
+
+A new script pref syncs only if its header line follows the `" *   name  type ..."` format; the
+installer test counts the synced prefs, so adding one is a deliberate change to that count.
+
+### Releasing the `cranez` command
+
+Only needed when `bin/cranez` changes:
+
+1. Bump `CRANEZ_VERSION` in `bin/cranez`, commit, push.
+2. `git tag vX.Y.Z && git push origin vX.Y.Z`
+3. `curl -sL https://github.com/ivanmorales/cranez/archive/refs/tags/vX.Y.Z.tar.gz | shasum -a 256`
+4. In [ivanmorales/homebrew-tap](https://github.com/ivanmorales/homebrew-tap), update `url` and
+   `sha256` in `Formula/cranez.rb`, commit, push.
 
 ## Tests
 
@@ -70,14 +114,17 @@ bash tests/run.sh
 ```
 
 Runs without Zen or macOS: syntax checks, shellcheck, a simulated 3-monitor desktop for
-`pip-swipe`, a mixed-tab simulation for `tab-expiry`, and an end-to-end run of the installer on a
-fake Mac layout. In-browser behaviour still needs a manual check in Zen; see `CLAUDE.md`.
+`pip-swipe`, a mixed-tab simulation for `tab-expiry`, and end-to-end runs of the installer,
+`cranez.sh setup` and the `cranez` command on a fake Mac (stubbed `brew`, `open`, `osascript`,
+`launchctl`, and a local repo standing in for GitHub). In-browser behaviour still needs a manual
+check in Zen; see `CLAUDE.md`.
 
 ## Layout
 
 ```
-cranez.sh                 installer
-zen-prefs.js              prefs written on install
+bin/cranez                the command Homebrew installs (keeps a checkout, forwards to cranez.sh)
+cranez.sh                 installer / engine
+zen-prefs.js              defaults for a brand-new Mac
 scripts/*.uc.js           the scripts
 tests/                    tests (bash tests/run.sh)
 vendor/fx-autoconfig/     pinned loader (MPL-2.0; version in COMMIT)
