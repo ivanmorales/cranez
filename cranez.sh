@@ -171,24 +171,45 @@ install_profile() {
   ok "Scripts installed: $(tr '\n' ' ' <"$manifest")"
 }
 
-# Seed prefs into prefs.js (Zen must be quit). Applied once per install, so
-# later changes in about:config stick.
+# Every documented script pref (header lines like " *   pipswipe.margin  int ..."), minus
+# per-Mac state and debug switches, plus the PiP prefs zen-prefs.js manages.
+syncable_prefs() {
+  {
+    awk '/^ \*   (arcpip|arclittle|pipswipe|tabexpiry|devbar)\.[a-z_]+ / { print $2 }' "$KIT"/scripts/*.uc.js |
+      grep -vE '\.debug$|^devbar\.visible$|^tabexpiry\.run_now$'
+    echo "media.videocontrols.picture-in-picture.enable-when-switching-tabs.enabled"
+    echo "media.videocontrols.picture-in-picture.enable-when-occluded.enabled"
+  } | sort -u
+}
+
+# Zen must be quit. zen-prefs.js only fills in prefs this profile doesn't have yet (tuned
+# values travel through Firefox Sync, so never overwrite them); then Sync is turned on for
+# every cranez pref. The services.sync.* control prefs are ours and are rewritten each time.
 apply_prefs() {
-  [[ -f "$PREFS_FILE" ]] || return 0
-  local pj="$PROFILE/prefs.js" names tmp count
-  names=$(grep -E '^user_pref\("' "$PREFS_FILE" | awk -F'"' '{ print $2 }' || true)
-  if [[ -z "$names" ]]; then
-    ok "No prefs to apply"
-    return 0
-  fi
+  local pj="$PROFILE/prefs.js" tmp line name names added=0
   touch "$pj"
+  # A last line without a newline would swallow the first pref appended after it.
+  if [[ -n "$(tail -c 1 "$pj")" ]]; then echo >>"$pj"; fi
+  if [[ -f "$PREFS_FILE" ]]; then
+    while IFS= read -r line; do
+      name=$(printf '%s\n' "$line" | awk -F'"' '{ print $2 }')
+      if ! grep -qF "user_pref(\"$name\"," "$pj"; then
+        printf '%s\n' "$line" >>"$pj"
+        added=$((added + 1))
+      fi
+    done < <(grep -E '^user_pref\("' "$PREFS_FILE" || true)
+  fi
+  ok "Applied $added new default pref(s) from zen-prefs.js"
+
+  names=$(syncable_prefs)
   tmp=$(mktemp)
-  awk -F'"' 'NR == FNR { drop[$0] = 1; next } !(/^user_pref\("/ && ($2 in drop))' \
+  awk -F'"' 'NR == FNR { drop["services.sync.prefs.sync." $0] = 1; next }
+    !(/^user_pref\("/ && ($2 in drop || $2 == "services.sync.prefs.dangerously_allow_arbitrary"))' \
     <(printf '%s\n' "$names") "$pj" >"$tmp"
-  grep -E '^user_pref\("' "$PREFS_FILE" >>"$tmp"
+  echo 'user_pref("services.sync.prefs.dangerously_allow_arbitrary", true);' >>"$tmp"
+  printf '%s\n' "$names" | awk '{ printf "user_pref(\"services.sync.prefs.sync.%s\", true);\n", $0 }' >>"$tmp"
   mv "$tmp" "$pj"
-  count=$(printf '%s\n' "$names" | wc -l | tr -d ' ')
-  ok "Applied $count pref(s) from zen-prefs.js"
+  ok "Sync on for $(printf '%s\n' "$names" | wc -l | tr -d ' ') cranez pref(s)"
 }
 
 clear_startup_cache() {
@@ -264,10 +285,9 @@ cmd_capture() {
                  END { for (i = 1; i <= n; i++) print last[order[i]] }' >"$tmp"
   # shellcheck disable=SC2016  # backticks are literal text in the header
   {
-    echo '// Prefs that cranez.sh writes into Zen on `install` (Zen must be quit).'
-    echo '// Applied once per install; later changes in about:config stick.'
-    echo '// To carry tuned values to another Mac: tune them in about:config, quit Zen,'
-    echo '// run `./cranez.sh capture`, commit, then `./cranez.sh install` on the other Mac.'
+    echo '// Defaults for a brand-new Mac. `install` only sets the ones a profile doesn'"'"'t have yet;'
+    echo '// tuned values travel between Macs through your Mozilla account (Firefox Sync).'
+    echo '// To change these defaults: in a dev clone, quit Zen, run `./cranez.sh capture`, commit.'
     cat "$tmp"
   } >"$PREFS_FILE"
   n=$(wc -l <"$tmp" | tr -d ' ')
@@ -288,7 +308,7 @@ cmd_after_update() {
     stamp="$STATE_DIR/notified-$ver"
     [[ -f "$stamp" ]] && exit 0
     touch "$stamp"
-    notify "Zen $ver turned your scripts off. Run: cranez.sh loader"
+    notify "Zen $ver turned your scripts off. Run: cranez loader"
   fi
 }
 

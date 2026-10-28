@@ -54,6 +54,8 @@ KIT="$T/kit"
 cp -R "$ROOT" "$KIT"
 rm -rf "$KIT/.git"
 cd "$KIT" || exit 1
+# One default the profile lacks, one it already has (prefs.js says 180).
+printf '%s\n' 'user_pref("arcpip.delay_ms", 300);' 'user_pref("pipswipe.settle_ms", 250);' >>zen-prefs.js
 
 fails=0
 check() {
@@ -62,6 +64,14 @@ check() {
   if "$@"; then echo "  ok    $msg"; else echo "  FAIL  $msg"; fails=$((fails + 1)); fi
 }
 count() { grep -c "$1" "$2" || true; }
+# shellcheck disable=SC2329  # called through check
+syncs_one_per_script() {
+  grep -q 'sync.arcpip.require_audio"' "$P/prefs.js" &&
+    grep -q 'sync.arclittle.escape_closes"' "$P/prefs.js" &&
+    grep -q 'sync.devbar.color"' "$P/prefs.js" &&
+    grep -q 'sync.tabexpiry.bookmark_ignore_query"' "$P/prefs.js"
+}
+PIP='("media.videocontrols.picture-in-picture.enable-when-switching-tabs'
 
 ./cranez.sh install >"$T/out1" 2>&1
 check "install exits 0" test $? -eq 0
@@ -77,8 +87,19 @@ check "retired script from old manifest removed" test ! -e "$P/chrome/JS/retired
 check "old manifest migrated" test ! -e "$P/chrome/JS/.zen-kit-manifest"
 check "new manifest written" test -s "$P/chrome/JS/.cranez-manifest"
 check "startup cache cleared" test ! -d "$CACHE"
-check "tab-switch PiP pref set to true" grep -q 'enable-when-switching-tabs.enabled", true' "$P/prefs.js"
-check "tab-switch PiP pref present once" test "$(count enable-when-switching-tabs "$P/prefs.js")" -eq 1
+check "existing tab-switch PiP pref kept" grep -q 'enable-when-switching-tabs.enabled", false' "$P/prefs.js"
+check "tab-switch PiP pref present once" test "$(count "$PIP" "$P/prefs.js")" -eq 1
+check "missing default added" grep -q 'arcpip.delay_ms", 300' "$P/prefs.js"
+check "existing value not overwritten by default" test "$(count '("pipswipe.settle_ms"' "$P/prefs.js")" -eq 1
+check "existing value kept" grep -q 'pipswipe.settle_ms", 180' "$P/prefs.js"
+check "sync allowed for arbitrary prefs" grep -q 'services.sync.prefs.dangerously_allow_arbitrary", true' "$P/prefs.js"
+check "sync on for pipswipe.settle_ms" grep -q 'services.sync.prefs.sync.pipswipe.settle_ms", true' "$P/prefs.js"
+check "sync on for tab-switch PiP" grep -q 'services.sync.prefs.sync.media.videocontrols.picture-in-picture.enable-when-switching-tabs.enabled", true' "$P/prefs.js"
+check "sync on for one pref per script" syncs_one_per_script
+check "debug/visible/run_now not synced" test "$(grep -cE 'sync\.prefs\.sync\..*(\.debug|devbar\.visible|run_now)"' "$P/prefs.js")" -eq 0
+# 28 = every documented script pref minus exclusions, plus 2 PiP prefs. Adding a pref to a
+# script header changes this on purpose: decide whether it syncs.
+check "28 prefs synced" test "$(count 'services.sync.prefs.sync\.' "$P/prefs.js")" -eq 28
 check "unrelated prefs untouched" grep -q 'browser.startup.homepage' "$P/prefs.js"
 
 ./cranez.sh status >"$T/out2" 2>&1
@@ -92,7 +113,12 @@ check "capture skips devbar.visible" test "$(count 'devbar.visible' zen-prefs.js
 check "capture skips tabexpiry.run_now" test "$(count 'run_now' zen-prefs.js)" -eq 0
 
 ./cranez.sh install >/dev/null 2>&1
-check "re-install is idempotent (pref still once)" test "$(count enable-when-switching-tabs "$P/prefs.js")" -eq 1
+check "re-install is idempotent (pref still once)" test "$(count "$PIP" "$P/prefs.js")" -eq 1
+check "re-install: sync control pref once" test "$(count 'sync.pipswipe.settle_ms"' "$P/prefs.js")" -eq 1
+check "re-install: allow_arbitrary once" test "$(count dangerously_allow_arbitrary "$P/prefs.js")" -eq 1
+printf '%s' "$(cat "$P/prefs.js")" >"$T/nonl" && mv "$T/nonl" "$P/prefs.js" # drop final newline
+./cranez.sh install >/dev/null 2>&1
+check "prefs.js without final newline stays one pref per line" test "$(count ');user_pref' "$P/prefs.js")" -eq 0
 
 rm -f "$RES/config.js"
 ./cranez.sh after-update >/dev/null 2>&1
