@@ -1,6 +1,8 @@
 // ==UserScript==
 // @name           dev-bar
 // @description    Arc-style ^D developer bar: shows the tab's URL with copy, console, network and inspect buttons
+// @cranez-name    ^Dev Bar
+// @cranez-blurb   Ctrl+D: URL, Copy, Console, Network, Inspect. Nerd mode on
 // @include        main
 // ==/UserScript==
 

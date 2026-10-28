@@ -1,6 +1,8 @@
 // ==UserScript==
 // @name           tab-expiry
 // @description    Arc-style tab expiration: close tabs untouched for 24h unless pinned, an Essential, or bookmarked
+// @cranez-name    Tab Expirererer
+// @cranez-blurb   untouched for 24h? gone. Pinned, bookmarked & noisy tabs live
 // @include        main
 // ==/UserScript==
 

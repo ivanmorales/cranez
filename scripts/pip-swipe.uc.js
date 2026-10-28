@@ -1,6 +1,8 @@
 // ==UserScript==
 // @name           pip-swipe
 // @description    Arc-style swipe-to-move for the Picture-in-Picture window: fling, corner snapping, screen hopping (PoC)
+// @cranez-name    PiP Swiper
+// @cranez-blurb   fling the PiP window anywhere: corners, monitors, never lost
 // @include        chrome://global/content/pictureinpicture/player.xhtml
 // ==/UserScript==
 

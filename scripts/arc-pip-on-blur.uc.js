@@ -1,6 +1,8 @@
 // ==UserScript==
 // @name           arc-pip-on-blur
 // @description    Arc-style auto Picture-in-Picture when Zen loses focus to another app (PoC)
+// @cranez-name    PiP on Blur
+// @cranez-blurb   ⌘Tab away and your video tags along in Picture-in-Picture
 // @include        main
 // ==/UserScript==
 

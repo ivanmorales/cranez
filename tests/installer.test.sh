@@ -102,8 +102,17 @@ check "debug/visible/run_now not synced" test "$(grep -cE 'sync\.prefs\.sync\..*
 check "28 prefs synced" test "$(count 'services.sync.prefs.sync\.' "$P/prefs.js")" -eq 28
 check "unrelated prefs untouched" grep -q 'browser.startup.homepage' "$P/prefs.js"
 
+for feature in "PiP on Blur" "^Dev Bar" "Just the tip" "PiP Swiper" "Tab Expirererer"; do
+  check "install shows feature: $feature" grep -qF "$feature" "$T/out1"
+done
+check "install shows blurbs, not a file list" test "$(count 'Scripts installed' "$T/out1")" -eq 0
+check "every script has a feature name and blurb" test "$(grep -lE '^// @cranez-name ' scripts/*.uc.js | wc -l)" -eq "$(find scripts -name '*.uc.js' | wc -l)" -a \
+  "$(grep -lE '^// @cranez-blurb ' scripts/*.uc.js | wc -l)" -eq "$(find scripts -name '*.uc.js' | wc -l)"
+check "no animation escapes when not a terminal" test "$(count $'\033\[' "$T/out1")" -eq 0
+
 ./cranez.sh status >"$T/out2" 2>&1
 check "status reports loader in Zen.app" grep -q "✓ Loader in Zen.app" "$T/out2"
+check "status names features" grep -qF "✓ PiP Swiper" "$T/out2"
 
 ./cranez.sh capture >/dev/null 2>&1
 check "capture keeps tuned prefs" grep -q 'pipswipe.settle_ms", 180' zen-prefs.js
@@ -112,7 +121,10 @@ check "capture skips debug prefs" test "$(count 'pipswipe.debug' zen-prefs.js)" 
 check "capture skips devbar.visible" test "$(count 'devbar.visible' zen-prefs.js)" -eq 0
 check "capture skips tabexpiry.run_now" test "$(count 'run_now' zen-prefs.js)" -eq 0
 
-./cranez.sh install >/dev/null 2>&1
+CRANEZ_ANIM=1 ./cranez.sh install >"$T/out3" 2>&1
+check "animated install exits 0" test $? -eq 0
+check "animated install lands crates" grep -q 'thunk' "$T/out3"
+check "animated install still lists features" grep -qF "Tab Expirererer" "$T/out3"
 check "re-install is idempotent (pref still once)" test "$(count "$PIP" "$P/prefs.js")" -eq 1
 check "re-install: sync control pref once" test "$(count 'sync.pipswipe.settle_ms"' "$P/prefs.js")" -eq 1
 check "re-install: allow_arbitrary once" test "$(count dangerously_allow_arbitrary "$P/prefs.js")" -eq 1

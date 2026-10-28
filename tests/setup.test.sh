@@ -20,6 +20,7 @@ check "fresh: Zen asked to quit afterwards" grep -q 'app.zen-browser.zen' "$T/os
 check "fresh: scripts installed" cmp -s scripts/pip-swipe.uc.js "$P/chrome/JS/pip-swipe.uc.js"
 check "fresh: loader in Zen.app" test -f "$ZEN_APP/Contents/Resources/config.js"
 check "fresh: watcher bootstrapped" grep -q bootstrap "$T/launchctl.log"
+check "fresh: watcher says how to re-point it" grep -qF "if you move it, run ./cranez.sh watch-on again" "$T/out1"
 check "fresh: sign-in reminder" grep -q 'Mozilla account' "$T/out1"
 check "fresh: no ⌘Q prompt once Zen quits by itself" test "$(count 'Quit Zen' "$T/out1")" -eq 0
 

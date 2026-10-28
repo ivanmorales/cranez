@@ -44,6 +44,8 @@ rc=$?
 check "setup exits 0" test $rc -eq 0
 check "setup cloned the checkout" test -f "$CO/cranez.sh"
 check "watcher points at managed checkout" grep -qF "$CO/cranez.sh" "$PLIST"
+check "watcher message fits the managed checkout" grep -qF "It uses cranez's copy in $CO" "$T/o1"
+check "no 'move the kit' advice" test "$(count 'move' "$T/o1")" -eq 0
 
 rm -f "$ZEN_APP/Contents/Resources/config.js"
 "$C" status >"$T/o2" 2>&1

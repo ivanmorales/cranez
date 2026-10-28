@@ -1,6 +1,8 @@
 // ==UserScript==
 // @name           little-arc
 // @description    Arc-style "Little Arc" for Zen: links from other apps open in a small window; Cmd+O promotes it (PoC)
+// @cranez-name    Just the tip
+// @cranez-blurb   links from other apps peek in a tiny window; ⌘O goes all in
 // @include        main
 // ==/UserScript==
 

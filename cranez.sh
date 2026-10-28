@@ -27,9 +27,9 @@ AGENT_PLIST="$HOME/Library/LaunchAgents/$AGENT_LABEL.plist"
 PROFILE=""
 
 if [[ -t 1 ]]; then
-  G=$'\033[32m' R=$'\033[31m' Y=$'\033[33m' N=$'\033[0m'
+  G=$'\033[32m' R=$'\033[31m' Y=$'\033[33m' D=$'\033[2m' N=$'\033[0m'
 else
-  G="" R="" Y="" N=""
+  G="" R="" Y="" D="" N=""
 fi
 ok()     { printf '%s✓%s %s\n' "$G" "$N" "$*"; }
 warn()   { printf '%s!%s %s\n' "$Y" "$N" "$*"; }
@@ -175,7 +175,89 @@ install_profile() {
     cp "$f" "$js/"
     basename "$f" >>"$manifest"
   done
-  ok "Scripts installed: $(tr '\n' ' ' <"$manifest")"
+  show_features
+}
+
+# --------------------------------------------------------------------------
+# The fun part. Each script names itself in its header:
+#   // @cranez-name    PiP Swiper
+#   // @cranez-blurb   fling the PiP window anywhere...
+# In a terminal, a crane lowers each one onto Zen. CRANEZ_ANIM=0 skips that, =1 forces it.
+# --------------------------------------------------------------------------
+feature_field() { sed -n "s|^// @cranez-$2[[:space:]]*||p" "$1" | head -n 1; }
+feature_name() {
+  local n
+  n=$(feature_field "$1" name)
+  printf '%s\n' "${n:-$(basename "$1" .uc.js)}"
+}
+
+animate() {
+  case "${CRANEZ_ANIM:-auto}" in
+    0 | off) return 1 ;;
+    1 | on) return 0 ;;
+  esac
+  [[ -t 1 && "${TERM:-dumb}" != dumb ]]
+}
+
+CRANE_ROWS=7
+# One frame: crate "[ $CRANE_LABEL ]" at column $1 on row $2 of the four rows under the jib
+# (1 = just below the trolley, 3 = landed on Zen), cable above it when $3 is 1, and $4 beside
+# it. A "@" in $4 becomes a green check after padding (printf pads bytes, ✓ is three).
+crane_frame() {
+  local x=$1 drop=$2 cable=$3 note=${4:-} crate="[ $CRANE_LABEL ]" row line hook
+  hook=$((x + ${#crate} / 2))
+  printf ' %s\033[K\n' '___________________________________________'
+  printf ' %s\033[K\n' '\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|=|'
+  for row in 0 1 2 3; do
+    if [[ $row -eq $drop ]]; then
+      line="$(printf '%*s' "$x" '')$crate${note:+  $note}"
+    elif [[ $row -lt $drop && $cable -eq 1 ]]; then
+      line="$(printf '%*s|' "$hook" '')"
+    else
+      line=""
+    fi
+    line=$(printf ' %-40s|=|' "$line")
+    printf '%s\033[K\n' "${line/@/${G}✓${N}}"
+  done
+  printf ' %s\033[K\n' '===============[ Zen ]==================|=|=='
+}
+
+crane_drop() {
+  local x
+  CRANE_LABEL=$1
+  for x in 0 2 4 6; do
+    crane_frame "$x" 1 1
+    sleep 0.05
+    printf '\033[%dA' "$CRANE_ROWS"
+  done
+  for x in 2 3; do
+    crane_frame 6 "$x" 1
+    sleep 0.07
+    printf '\033[%dA' "$CRANE_ROWS"
+  done
+  crane_frame 6 3 1 "*thunk*"
+  sleep 0.25
+  printf '\033[%dA' "$CRANE_ROWS"
+  crane_frame 6 3 0 "@"
+  sleep 0.15
+  printf '\033[%dA\033[J' "$CRANE_ROWS" # wipe the crane; the checklist line takes its place
+}
+
+show_features() {
+  local f n=0 anim=0
+  if animate; then
+    anim=1
+    printf '\033[?25l'
+    trap 'printf "\033[?25h"' EXIT
+  fi
+  echo "Craning features into Zen:"
+  for f in "$KIT"/scripts/*.uc.js; do
+    if [[ $anim -eq 1 ]]; then crane_drop "$(feature_name "$f")"; fi
+    ok "$(printf '%-16s %s%s%s' "$(feature_name "$f")" "$D" "$(feature_field "$f" blurb)" "$N")"
+    n=$((n + 1))
+  done
+  if [[ $anim -eq 1 ]]; then printf '\033[?25h'; fi
+  ok "$n features landed. Zen has never looked so Arc."
 }
 
 # Every documented script pref (header lines like " *   pipswipe.margin  int ..."), minus
@@ -339,15 +421,16 @@ cmd_status() {
   echo "Profile: $PROFILE"
   if loader_current; then ok "Loader in Zen.app"; else bad "Loader missing from Zen.app → $ME loader"; fi
   if [[ -f "$PROFILE/chrome/utils/boot.sys.mjs" ]]; then ok "Loader in profile"; else bad "Loader missing from profile → $ME install"; fi
-  local f n
+  local f n name
   for f in "$KIT"/scripts/*.uc.js; do
     n=$(basename "$f")
+    name=$(feature_name "$f")
     if cmp -s "$f" "$PROFILE/chrome/JS/$n"; then
-      ok "$n"
+      ok "$name"
     elif [[ -f "$PROFILE/chrome/JS/$n" ]]; then
-      warn "$n differs from the kit → $ME install"
+      warn "$name is out of date ($n) → $ME install"
     else
-      bad "$n not installed → $ME install"
+      bad "$name not installed ($n) → $ME install"
     fi
   done
   if launchctl print "gui/$(id -u)/$AGENT_LABEL" >/dev/null 2>&1; then
@@ -433,7 +516,11 @@ EOF
   launchctl bootout "gui/$(id -u)/$AGENT_LABEL" >/dev/null 2>&1 || true
   launchctl bootstrap "gui/$(id -u)" "$AGENT_PLIST"
   ok "Update watcher on. After a Zen update it re-adds the loader if macOS allows it, otherwise it notifies you."
-  echo "   It points at this folder ($KIT); run watch-on again if you move the kit."
+  if [[ -n "${CRANEZ_CLI_NAME:-}" ]]; then
+    echo "   It uses cranez's copy in $KIT."
+  else
+    echo "   It uses this folder ($KIT); if you move it, run $ME watch-on again."
+  fi
 }
 
 remove_old_agent() {
