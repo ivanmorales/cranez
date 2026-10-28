@@ -64,7 +64,7 @@ check() {
   if "$@"; then echo "  ok    $msg"; else echo "  FAIL  $msg"; fails=$((fails + 1)); fi
 }
 count() { grep -c "$1" "$2" || true; }
-# shellcheck disable=SC2329  # called through check
+# shellcheck disable=SC2317,SC2329  # called through check
 syncs_one_per_script() {
   grep -q 'sync.arcpip.require_audio"' "$P/prefs.js" &&
     grep -q 'sync.arclittle.escape_closes"' "$P/prefs.js" &&
