@@ -14,7 +14,7 @@ done
 
 step "lint: shell"
 if command -v shellcheck >/dev/null 2>&1; then
-  shellcheck -s bash cranez.sh tests/*.sh && echo "  ok    shellcheck" || status=1
+  shellcheck -s bash cranez.sh bin/cranez tests/*.sh && echo "  ok    shellcheck" || status=1
 else
   echo "  skip  shellcheck not installed (brew install shellcheck)"
 fi
@@ -23,6 +23,7 @@ step "pip-swipe";   node tests/pip-swipe.test.js || status=1
 step "tab-expiry";  node tests/tab-expiry.test.js || status=1
 step "installer";   bash tests/installer.test.sh || status=1
 step "setup";       bash tests/setup.test.sh || status=1
+step "cli";         bash tests/cli.test.sh || status=1
 
 echo
 if [[ $status -eq 0 ]]; then echo "ALL PASSED"; else echo "FAILURES (see above)"; fi

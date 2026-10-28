@@ -1,0 +1,76 @@
+#!/bin/bash
+# cranez: Arc features for Zen. This is the command Homebrew installs. It keeps its own copy of
+# the cranez repo and hands every command to that copy's cranez.sh, so new scripts and fixes
+# arrive with `cranez setup`, not with a brew release.
+#
+#   cranez setup       get the latest cranez, then set up Zen (run it any time to update)
+#   cranez status      show what's installed
+#   cranez loader      re-enable scripts after a Zen update
+#   cranez watch-on    notify (and try to auto-fix) after Zen updates
+#   cranez watch-off
+#   cranez uninstall   remove everything cranez added
+#   cranez --version
+#
+# CRANEZ_HOME=/path/to/clone uses a dev clone instead, as-is (never fetched or reset).
+set -euo pipefail
+
+CRANEZ_VERSION="0.1.0"
+REPO_URL="${CRANEZ_REPO_URL:-https://github.com/ivanmorales/cranez.git}"
+CHECKOUT="${CRANEZ_HOME:-$HOME/Library/Application Support/cranez/repo}"
+
+if [[ -t 1 ]]; then
+  G=$'\033[32m' R=$'\033[31m' Y=$'\033[33m' N=$'\033[0m'
+else
+  G="" R="" Y="" N=""
+fi
+ok()   { printf '%s✓%s %s\n' "$G" "$N" "$*"; }
+warn() { printf '%s!%s %s\n' "$Y" "$N" "$*"; }
+die()  { printf '%s✗%s %s\n' "$R" "$N" "$*"; exit 1; }
+
+usage() { sed -n '6,14p' "$0" | sed 's/^# \{0,1\}//'; }
+
+# The managed checkout belongs to cranez: nothing the owner writes lives there, so it's
+# always brought to exactly origin/main. Offline, the copy we already have is used.
+sync_checkout() {
+  if [[ -n "${CRANEZ_HOME:-}" ]]; then return 0; fi
+  if [[ ! -d "$CHECKOUT/.git" ]]; then
+    rm -rf "$CHECKOUT"
+    mkdir -p "$(dirname "$CHECKOUT")"
+    git clone --quiet "$REPO_URL" "$CHECKOUT" || die "Couldn't download cranez from $REPO_URL."
+    ok "Downloaded cranez ($(git -C "$CHECKOUT" rev-parse --short HEAD))"
+    return 0
+  fi
+  if git -C "$CHECKOUT" fetch --quiet origin main 2>/dev/null &&
+    git -C "$CHECKOUT" reset --quiet --hard origin/main &&
+    git -C "$CHECKOUT" clean -fdq; then
+    ok "cranez up to date ($(git -C "$CHECKOUT" rev-parse --short HEAD))"
+  else
+    warn "Couldn't reach GitHub; using the copy from $(git -C "$CHECKOUT" rev-parse --short HEAD 2>/dev/null || echo '?')."
+  fi
+}
+
+case "${1:-help}" in
+  --version | -v | version)
+    echo "cranez $CRANEZ_VERSION"
+    exit 0
+    ;;
+  help | -h | --help)
+    usage
+    exit 0
+    ;;
+  setup) sync_checkout ;;
+  capture)
+    if [[ -z "${CRANEZ_HOME:-}" ]]; then
+      echo "cranez prefs sync between your Macs through your Mozilla account, so there's nothing to capture."
+      echo "To change the defaults a brand-new Mac starts with: in a dev clone, quit Zen,"
+      echo "run ./cranez.sh capture, then commit and push."
+      exit 0
+    fi
+    ;;
+esac
+
+if [[ ! -f "$CHECKOUT/cranez.sh" ]]; then
+  if [[ -n "${CRANEZ_HOME:-}" ]]; then die "No cranez.sh in CRANEZ_HOME ($CRANEZ_HOME)."; fi
+  die "No cranez checkout yet. Run: cranez setup"
+fi
+CRANEZ_CLI_NAME=cranez exec /bin/bash "$CHECKOUT/cranez.sh" "$@"
