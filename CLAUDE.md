@@ -40,7 +40,7 @@ Owner uses it daily on multiple Macs with 3 monitors and a Magic Mouse; Zen's to
 
 `bash tests/run.sh` (CI runs it too). Covers: syntax of all scripts, shellcheck, `pip-swipe`
 gestures on a fake 3-monitor desktop (fling caps, monitor hops, corner snap, never off screen),
-`tab-expiry` keep/close rules, the installer end to end on a fake Mac layout, and `cranez.sh
+`tab-expiry` keep/close rules, `little-arc` opening external links in the current space's container, the installer end to end on a fake Mac layout, and `cranez.sh
 setup` + `bin/cranez` on a shared fake Mac (`tests/fake-mac.sh`: stubbed `brew`, `open`,
 `osascript`, `launchctl`, an App-Management-blocking `cp`, a local bare repo as GitHub).
 Add a test case whenever you change behaviour those suites cover.
@@ -61,6 +61,8 @@ the Gatekeeper prompt, Firefox Sync carrying cranez prefs, a real `brew install`
   decaying deltas) and then swallowed.
 - **little-arc**: `window.browserDOMWindow` (its `openURI` is read-only in current Gecko, so the
   whole object is replaced with a forwarding Proxy), `nsIBrowserDOMWindow.OPEN_EXTERNAL`,
+  `gZenWorkspaces.getCurrentSpaceContainerId()` plus `window.arguments[5]` (userContextId) and
+  `[8]` (triggeringPrincipal) as `browser-init.js` reads them for the little window's container,
   `BrowserWindowTracker.getTopWindow`, `gBrowser.adoptTab`, js-ctypes cursor position. Little
   windows are popup-style (`toolbar.visible == false`); placement is encoded in `window.name`.
 - **tab-expiry**: `tab.lastAccessed`, Places DB (`moz_bookmarks` ⋈ `moz_places`),

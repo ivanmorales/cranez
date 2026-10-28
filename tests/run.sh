@@ -21,6 +21,7 @@ fi
 
 step "pip-swipe";   node tests/pip-swipe.test.js || status=1
 step "tab-expiry";  node tests/tab-expiry.test.js || status=1
+step "little-arc";  node tests/little-arc.test.js || status=1
 step "installer";   bash tests/installer.test.sh || status=1
 step "setup";       bash tests/setup.test.sh || status=1
 step "cli";         bash tests/cli.test.sh || status=1

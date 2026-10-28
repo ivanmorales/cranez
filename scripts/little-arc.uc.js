@@ -16,6 +16,8 @@
  * - In a little window: a floating "Open in Zen ⌘O" button, and Cmd+O, move the tab
  *   into the most recent main window (adoptTab keeps history) and close the little window.
  * - Links clicked inside Zen are untouched; only OS-external opens are rerouted.
+ * - The little window opens in the container of the Zen space you're in (e.g. a Work
+ *   space's container, so you're signed in), and ⌘O keeps it.
  *
  * Optional prefs (about:config):
  *   arclittle.enabled         bool  default true
@@ -37,7 +39,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "v3-cursor-screen";
+  const VERSION = "v4-space-container";
   const NAME_PREFIX = "arc-little-";
   const XHTML_NS = "http://www.w3.org/1999/xhtml";
 
@@ -135,15 +137,42 @@
     return { left, top, width, height };
   }
 
+  // Container (userContextId) of the space this window is showing; 0 = no container.
+  function spaceContainerId() {
+    try {
+      return window.gZenWorkspaces?.getCurrentSpaceContainerId?.() ?? 0;
+    } catch (e) {
+      console.error("[little-arc] could not read the space's container; opening without one", e);
+      return 0;
+    }
+  }
+
   function openLittle(spec) {
     const place = computePlacement();
+    const userContextId = spaceContainerId();
     // No "all" in the features => popup-style window: no tab strip, toolbar.visible
     // is false, and BrowserWindowTracker won't pick it as a main window.
     // Explicit left/top/width/height also tell Gecko to ignore any saved position.
     const features =
       `chrome,dialog=no,resizable=yes,` +
       `left=${place.left},top=${place.top},width=${place.width},height=${place.height}`;
-    window.openDialog(AppConstants.BROWSER_CHROME_URL, encodeName(place), features, spec);
+    // window.arguments as browser-init.js reads them: [0] uri ... [5] userContextId,
+    // [8] triggeringPrincipal (required once there are 3+ arguments).
+    log("opening in container", userContextId);
+    window.openDialog(
+      AppConstants.BROWSER_CHROME_URL,
+      encodeName(place),
+      features,
+      spec,
+      null,
+      null,
+      null,
+      false,
+      userContextId,
+      null,
+      null,
+      Services.scriptSecurityManager.getSystemPrincipal()
+    );
   }
 
   // ---------------------------------------------------------------------------
