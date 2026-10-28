@@ -331,6 +331,8 @@ Outward-facing: **confirm with the owner before every push, tag and repo creatio
   - Restart Zen. The Browser Console shows a `loaded` line for each script.
   - Settings → Sync shows the owner signed in.
   - On a second Mac, the Task 1 Step 1 check passes with a cranez pref, now without setting anything by hand.
+  - Migration as the README describes: setup on both Macs, then toggle a cranez pref on the tuned Mac and Sync Now on both. The tuned values arrive on the other Mac.
+  - Watch for: macOS asking whether the terminal may control Zen (the AppleScript quit), and App Translocation of a brew-installed Zen. If Zen runs from a translocated path, `zen_running` won't see it and the first-run wait times out.
 - [ ] **Step 7: Fresh-profile check (owner, manual, optional).**
   - Run with `ZEN_DATA` pointing at an empty folder, or on a Mac without Zen.
   - Gatekeeper "Open" appears once, the profile gets created, and Zen quits by itself.

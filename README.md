@@ -24,9 +24,10 @@ brew install ivanmorales/tap/cranez
 cranez setup
 ```
 
-`cranez setup` installs Zen if it's missing, opens it once so it creates its profile (click
-**Open** if macOS asks; Zen quits by itself afterwards), installs the loader, scripts and prefs,
-and turns on the update watcher. If Zen is open, it waits for you to quit it.
+`cranez setup` installs Zen if it's missing and opens it once so it creates its profile: click
+**Open** if macOS asks, and allow the terminal to control Zen if asked, so Zen can quit by
+itself. Then it installs the loader, scripts and prefs, and turns on the update watcher. If Zen
+is open, it waits for you to quit it.
 
 Two things only you can do, once per Mac:
 
@@ -52,8 +53,8 @@ values travel between your Macs through your Mozilla account: setup turns on Fir
 every cranez pref (except `*.debug`, `devbar.visible` and `tabexpiry.run_now`, which are per-Mac).
 Tune a pref on one Mac and it shows up on the others after the next sync.
 
-`zen-prefs.js` only holds defaults for a brand-new Mac: setup adds a pref from it only if the
-profile doesn't have that pref yet, so it never overwrites anything you've tuned. To change the
+`zen-prefs.js` only holds defaults for a brand-new Mac: setup adds each pref from it at most once
+per profile, and only if the profile doesn't have it, so it never overwrites anything you've tuned. To change the
 defaults, see Development.
 
 ## Commands
@@ -71,15 +72,16 @@ Overrides: `ZEN_APP=/path/to/Zen.app`, `ZEN_PROFILE=/path/to/profile`.
 
 ## Moving a Mac that already runs cranez from a clone
 
-Once per Mac:
+Firefox Sync only uploads a pref when it changes while Zen is running, so prefs that setup
+writes don't sync by themselves. Once:
 
 1. Sign in to your Mozilla account in Zen, on every Mac.
-2. Start with the Mac whose cranez prefs are tuned best: `brew install ivanmorales/tap/cranez`,
-   `cranez setup`, restart Zen, and let it sync. That Mac uploads its values first.
-3. On each other Mac, the same commands. Setup doesn't overwrite the prefs it already has, and
-   Sync then replaces them with the uploaded values.
-4. Setup moves the update watcher to its own copy and says so. Delete the old clone if you don't
-   develop in it.
+2. On every Mac: `brew install ivanmorales/tap/cranez`, then `cranez setup`. Setup keeps the
+   prefs each Mac already has, moves the update watcher to its own copy, and says so.
+3. On the Mac whose cranez prefs are tuned best, open Zen, change any cranez pref in
+   about:config and change it back, then Settings → Sync → Sync Now. That uploads its values.
+4. On each other Mac: open Zen, Sync Now.
+5. Delete the old clones you don't develop in.
 
 ## Development
 

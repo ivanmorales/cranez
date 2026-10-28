@@ -13,6 +13,7 @@ export HOME="$T/home"
 export ZEN_APP="$T/Applications/Zen.app"
 export ZEN_DATA="$HOME/Library/Application Support/zen"
 export CRANEZ_PROFILE_TIMEOUT=3
+export CRANEZ_QUIT_GRACE=5
 export FAKE_T="$T"
 export PROFILE_NAME="abc123.Default (release)"
 P="$ZEN_DATA/Profiles/$PROFILE_NAME"
@@ -36,18 +37,30 @@ Path=Profiles/$PROFILE_NAME
 Default=1
 INI
 EOF
+# Like the real cask: `install` is a no-op once the cask is recorded as installed, even if
+# Zen.app was deleted by hand; `reinstall` always puts the app back. The app's "binary" runs
+# for 2s, as if Zen took a moment to quit.
 cat >"$T/stubs/brew" <<'EOF'
 #!/bin/bash
 echo "$*" >>"$FAKE_T/brew.log"
-if [[ "$*" == "install --cask zen" ]]; then
-  mkdir -p "$ZEN_APP/Contents/Resources" "$ZEN_APP/Contents/MacOS"
-fi
+case "$*" in
+  "list --cask zen") [[ -e "$FAKE_T/cask-installed" ]]; exit ;;
+  "install --cask zen") [[ -e "$FAKE_T/cask-installed" ]] && exit 0 ;;
+  "reinstall --cask zen") ;;
+  *) exit 0 ;;
+esac
+touch "$FAKE_T/cask-installed"
+mkdir -p "$ZEN_APP/Contents/Resources" "$ZEN_APP/Contents/MacOS"
+printf '#!/bin/bash\nsleep 2\n' >"$ZEN_APP/Contents/MacOS/zen"
+chmod +x "$ZEN_APP/Contents/MacOS/zen"
 EOF
+# Opening Zen (after the Gatekeeper click) starts it, and a first launch creates the profile.
 cat >"$T/stubs/open" <<'EOF'
 #!/bin/bash
 echo "$*" >>"$FAKE_T/open.log"
 if [[ "${1:-}" == "$ZEN_APP" && ! -e "$FAKE_T/no-profile-on-open" ]]; then
-  "$FAKE_T/make-profile"
+  [[ -d "$ZEN_DATA" ]] || "$FAKE_T/make-profile"
+  if [[ -x "$ZEN_APP/Contents/MacOS/zen" ]]; then "$ZEN_APP/Contents/MacOS/zen" >/dev/null 2>&1 & fi
 fi
 EOF
 for s in osascript launchctl; do

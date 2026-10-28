@@ -119,6 +119,13 @@ check "re-install: allow_arbitrary once" test "$(count dangerously_allow_arbitra
 printf '%s' "$(cat "$P/prefs.js")" >"$T/nonl" && mv "$T/nonl" "$P/prefs.js" # drop final newline
 ./cranez.sh install >/dev/null 2>&1
 check "prefs.js without final newline stays one pref per line" test "$(count ');user_pref' "$P/prefs.js")" -eq 0
+# The owner sets the PiP pref back to Firefox's default, so Firefox drops its line: a default
+# is applied once per profile and must not come back.
+grep -v 'enable-when-switching-tabs.enabled", ' "$P/prefs.js" >"$T/nopip"
+grep 'services.sync.prefs.sync.media' "$P/prefs.js" >>"$T/nopip"
+mv "$T/nopip" "$P/prefs.js"
+./cranez.sh install >/dev/null 2>&1
+check "default the owner reset isn't re-applied" test "$(count "$PIP" "$P/prefs.js")" -eq 0
 
 rm -f "$RES/config.js"
 ./cranez.sh after-update >/dev/null 2>&1

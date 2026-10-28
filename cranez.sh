@@ -189,21 +189,27 @@ syncable_prefs() {
   } | sort -u
 }
 
-# Zen must be quit. zen-prefs.js only fills in prefs this profile doesn't have yet (tuned
+# Zen must be quit. zen-prefs.js only fills in prefs this profile has never had (tuned
 # values travel through Firefox Sync, so never overwrite them); then Sync is turned on for
 # every cranez pref. The services.sync.* control prefs are ours and are rewritten each time.
 apply_prefs() {
-  local pj="$PROFILE/prefs.js" tmp line name names added=0
+  local pj="$PROFILE/prefs.js" applied="$PROFILE/chrome/.cranez-defaults" tmp line name names added=0
   touch "$pj"
+  # Each default is considered once per profile: setting a pref back to Firefox's default drops
+  # its line from prefs.js, and that choice must stick.
+  mkdir -p "$PROFILE/chrome"
+  touch "$applied"
   # A last line without a newline would swallow the first pref appended after it.
   if [[ -n "$(tail -c 1 "$pj")" ]]; then echo >>"$pj"; fi
   if [[ -f "$PREFS_FILE" ]]; then
     while IFS= read -r line; do
       name=$(printf '%s\n' "$line" | awk -F'"' '{ print $2 }')
+      if grep -qxF "$name" "$applied"; then continue; fi
       if ! grep -qF "user_pref(\"$name\"," "$pj"; then
         printf '%s\n' "$line" >>"$pj"
         added=$((added + 1))
       fi
+      echo "$name" >>"$applied"
     done < <(grep -E '^user_pref\("' "$PREFS_FILE" || true)
   fi
   ok "Applied $added new default pref(s) from zen-prefs.js"
@@ -240,27 +246,48 @@ ensure_zen() {
     die "Zen isn't installed and Homebrew isn't on PATH. Install Homebrew (https://brew.sh) or Zen, then run $ME setup again."
   fi
   echo "Installing Zen with Homebrew…"
-  brew install --cask zen
+  if brew list --cask zen >/dev/null 2>&1; then
+    brew reinstall --cask zen # brew still has it recorded, but Zen.app was deleted
+  else
+    brew install --cask zen
+  fi
   [[ -d "$APP" ]] || die "Homebrew installed Zen, but it isn't at $APP (set ZEN_APP=/path/to/Zen.app)."
+  ZEN_FRESH=1
   ok "Zen installed"
 }
 
-# Zen creates its own profile on first launch. Open it normally so macOS can show its one-time
-# "downloaded from the internet" confirmation, wait for the profile, then ask Zen to quit.
+# Open Zen normally so macOS can show its one-time "downloaded from the internet" confirmation.
+# A first launch creates the profile. A freshly installed Zen is opened even when a profile
+# already exists: macOS checks the app's seal on that first launch, so it has to happen before
+# the loader adds files to the bundle, or Zen can be reported as damaged.
 ensure_profile() {
-  if has_profile; then return 0; fi
+  if has_profile && [[ -z "${ZEN_FRESH:-}" ]]; then return 0; fi
   local t="${CRANEZ_PROFILE_TIMEOUT:-300}" i=0
-  open "$APP"
-  echo "Opening Zen once to create its profile. If macOS asks, click Open."
-  until has_profile; do
+  open "$APP" || die "Couldn't open $APP."
+  echo "Opening Zen once. If macOS asks, click Open."
+  until has_profile && zen_running; do
     if [[ $i -ge $t ]]; then
+      if has_profile; then
+        die "Zen didn't start in ${t}s. Open Zen once (click Open if macOS asks), quit it, then run $ME setup again."
+      fi
       die "Zen didn't create a profile in ${t}s. Open Zen once, quit it, then run $ME setup again."
     fi
     sleep 1
     i=$((i + 1))
   done
+  ask_zen_to_quit
+  ok "Zen opened once; profile ready"
+}
+
+# Quitting via AppleScript may make macOS ask once whether the terminal may control Zen.
+ask_zen_to_quit() {
+  local i=0
+  echo "Asking Zen to quit (allow it if macOS asks)…"
   osascript -e 'tell application id "app.zen-browser.zen" to quit' >/dev/null 2>&1 || true
-  ok "Zen profile created"
+  while zen_running && [[ $i -lt ${CRANEZ_QUIT_GRACE:-15} ]]; do
+    sleep 1
+    i=$((i + 1))
+  done
 }
 
 wait_for_quit() {

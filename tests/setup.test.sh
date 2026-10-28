@@ -21,12 +21,13 @@ check "fresh: scripts installed" cmp -s scripts/pip-swipe.uc.js "$P/chrome/JS/pi
 check "fresh: loader in Zen.app" test -f "$ZEN_APP/Contents/Resources/config.js"
 check "fresh: watcher bootstrapped" grep -q bootstrap "$T/launchctl.log"
 check "fresh: sign-in reminder" grep -q 'Mozilla account' "$T/out1"
+check "fresh: no ⌘Q prompt once Zen quits by itself" test "$(count 'Quit Zen' "$T/out1")" -eq 0
 
 # Re-run, now signed in to the Mozilla account.
 touch "$P/signedInUser.json"
 run out2
 check "re-run: exits 0" test $rc -eq 0
-check "re-run: brew not called again" test "$(count install "$T/brew.log")" -eq 1
+check "re-run: brew not called again" test "$(count 'install --cask' "$T/brew.log")" -eq 1
 check "re-run: Zen not opened again" test "$(count "$ZEN_APP" "$T/open.log")" -eq 1
 check "re-run: no sign-in reminder when signed in" test "$(count 'Mozilla account' "$T/out2")" -eq 0
 
@@ -51,6 +52,16 @@ rm -f "$T/block-app"
 run out5
 check "unblocked: re-run completes" test $rc -eq 0
 check "unblocked: loader in Zen.app" test -f "$ZEN_APP/Contents/Resources/config.js"
+
+# Zen.app deleted by hand, profile kept: brew must reinstall (its cask record says installed)
+# and Zen must get its first, Gatekeeper-checked launch before the loader touches the bundle.
+rm -rf "$ZEN_APP"
+opens=$(count "$ZEN_APP" "$T/open.log")
+run out5b
+check "deleted app: setup exits 0" test $rc -eq 0
+check "deleted app: brew reinstalled zen" grep -q 'reinstall --cask zen' "$T/brew.log"
+check "deleted app: Zen launched once before install" test "$(count "$ZEN_APP" "$T/open.log")" -eq $((opens + 1))
+check "deleted app: loader in Zen.app" test -f "$ZEN_APP/Contents/Resources/config.js"
 
 # Gatekeeper never clicked: Zen never creates a profile.
 rm -rf "$ZEN_DATA"
