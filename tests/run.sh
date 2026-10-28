@@ -22,6 +22,7 @@ fi
 step "pip-swipe";   node tests/pip-swipe.test.js || status=1
 step "tab-expiry";  node tests/tab-expiry.test.js || status=1
 step "installer";   bash tests/installer.test.sh || status=1
+step "setup";       bash tests/setup.test.sh || status=1
 
 echo
 if [[ $status -eq 0 ]]; then echo "ALL PASSED"; else echo "FAILURES (see above)"; fi

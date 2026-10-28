@@ -1,6 +1,7 @@
 #!/bin/bash
 # cranez: Arc features for Zen. Installs the loader, scripts and prefs on any Mac.
 #
+#   ./cranez.sh setup       everything: Zen, its profile, loader, scripts, prefs, watcher
 #   ./cranez.sh install     loader + scripts + prefs (quit Zen first)
 #   ./cranez.sh loader      re-enable scripts after a Zen update
 #   ./cranez.sh status      show what's installed
@@ -13,6 +14,7 @@
 set -euo pipefail
 
 KIT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ME="${CRANEZ_CLI_NAME:-$0}"  # what to tell the owner to run (bin/cranez sets "cranez")
 APP="${ZEN_APP:-/Applications/Zen.app}"
 RES="$APP/Contents/Resources"
 ZEN_DATA="${ZEN_DATA:-$HOME/Library/Application Support/zen}"
@@ -89,9 +91,9 @@ loader_current() {
 copy_loader() {
   local s="${1:-}" err
   err=$(mktemp)
-  if { $s /bin/cp "$LOADER/program/config.js" "$RES/config.js" &&
-       $s /bin/mkdir -p "$RES/defaults/pref" &&
-       $s /bin/cp "$LOADER/program/defaults/pref/config-prefs.js" "$RES/defaults/pref/config-prefs.js"; } 2>"$err"; then
+  if { $s cp "$LOADER/program/config.js" "$RES/config.js" &&
+       $s mkdir -p "$RES/defaults/pref" &&
+       $s cp "$LOADER/program/defaults/pref/config-prefs.js" "$RES/defaults/pref/config-prefs.js"; } 2>"$err"; then
     rm -f "$err"
     return 0
   fi
@@ -122,7 +124,12 @@ install_loader() {
     2)
       bad "macOS blocked writing into Zen.app."
       echo "   System Settings → Privacy & Security → App Management → turn on your terminal app,"
-      echo "   quit and reopen the terminal, then run: $0 loader"
+      if [[ -n "${SETUP:-}" ]]; then
+        open "x-apple.systempreferences:com.apple.preference.security?Privacy_AppBundles" >/dev/null 2>&1 || true
+        echo "   quit and reopen the terminal, then run: $ME setup"
+      else
+        echo "   quit and reopen the terminal, then run: $ME loader"
+      fi
       exit 1
       ;;
     *) die "Couldn't install the loader into $RES" ;;
@@ -223,8 +230,63 @@ clear_startup_cache() {
 }
 
 # --------------------------------------------------------------------------
+# Setup: get a Mac from "only Homebrew" to a Zen that's ready for install
+# --------------------------------------------------------------------------
+has_profile() { (find_profile) >/dev/null 2>&1; }
+
+ensure_zen() {
+  if [[ -d "$APP" ]]; then return 0; fi
+  if ! command -v brew >/dev/null 2>&1; then
+    die "Zen isn't installed and Homebrew isn't on PATH. Install Homebrew (https://brew.sh) or Zen, then run $ME setup again."
+  fi
+  echo "Installing Zen with Homebrew…"
+  brew install --cask zen
+  [[ -d "$APP" ]] || die "Homebrew installed Zen, but it isn't at $APP (set ZEN_APP=/path/to/Zen.app)."
+  ok "Zen installed"
+}
+
+# Zen creates its own profile on first launch. Open it normally so macOS can show its one-time
+# "downloaded from the internet" confirmation, wait for the profile, then ask Zen to quit.
+ensure_profile() {
+  if has_profile; then return 0; fi
+  local t="${CRANEZ_PROFILE_TIMEOUT:-300}" i=0
+  open "$APP"
+  echo "Opening Zen once to create its profile. If macOS asks, click Open."
+  until has_profile; do
+    if [[ $i -ge $t ]]; then
+      die "Zen didn't create a profile in ${t}s. Open Zen once, quit it, then run $ME setup again."
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  osascript -e 'tell application id "app.zen-browser.zen" to quit' >/dev/null 2>&1 || true
+  ok "Zen profile created"
+}
+
+wait_for_quit() {
+  zen_running || return 0
+  echo "Quit Zen (⌘Q) to continue…"
+  while zen_running; do sleep 1; done
+}
+
+# --------------------------------------------------------------------------
 # Commands
 # --------------------------------------------------------------------------
+cmd_setup() {
+  ensure_zen
+  ensure_profile
+  wait_for_quit
+  SETUP=1 cmd_install
+  echo
+  cmd_watch_on
+  echo
+  cmd_status
+  echo "cranez checkout: $(git -C "$KIT" rev-parse --short HEAD 2>/dev/null || echo '?')"
+  if [[ ! -f "$PROFILE/signedInUser.json" ]]; then
+    warn "Sign in to your Mozilla account in Zen so cranez prefs sync between your Macs."
+  fi
+}
+
 cmd_install() {
   find_profile
   require_quit
@@ -248,23 +310,23 @@ cmd_status() {
   find_profile
   echo "Zen:     $APP ($(zen_version))"
   echo "Profile: $PROFILE"
-  if loader_current; then ok "Loader in Zen.app"; else bad "Loader missing from Zen.app → $0 loader"; fi
-  if [[ -f "$PROFILE/chrome/utils/boot.sys.mjs" ]]; then ok "Loader in profile"; else bad "Loader missing from profile → $0 install"; fi
+  if loader_current; then ok "Loader in Zen.app"; else bad "Loader missing from Zen.app → $ME loader"; fi
+  if [[ -f "$PROFILE/chrome/utils/boot.sys.mjs" ]]; then ok "Loader in profile"; else bad "Loader missing from profile → $ME install"; fi
   local f n
   for f in "$KIT"/scripts/*.uc.js; do
     n=$(basename "$f")
     if cmp -s "$f" "$PROFILE/chrome/JS/$n"; then
       ok "$n"
     elif [[ -f "$PROFILE/chrome/JS/$n" ]]; then
-      warn "$n differs from the kit → $0 install"
+      warn "$n differs from the kit → $ME install"
     else
-      bad "$n not installed → $0 install"
+      bad "$n not installed → $ME install"
     fi
   done
   if launchctl print "gui/$(id -u)/$AGENT_LABEL" >/dev/null 2>&1; then
     ok "Update watcher on"
   else
-    warn "Update watcher off (optional: $0 watch-on)"
+    warn "Update watcher off (optional: $ME watch-on)"
   fi
 }
 
@@ -313,6 +375,11 @@ cmd_after_update() {
 }
 
 cmd_watch_on() {
+  local old
+  old=$(grep -o '<string>[^<]*/cranez\.sh</string>' "$AGENT_PLIST" 2>/dev/null | sed 's/<[^>]*>//g' || true)
+  if [[ -n "$old" && "$old" != "$KIT/cranez.sh" ]]; then
+    warn "Watcher moved from $(dirname "$old") to $KIT; the old folder isn't used by the watcher any more."
+  fi
   mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
   cat >"$AGENT_PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -380,10 +447,11 @@ cmd_uninstall() {
 }
 
 usage() {
-  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 case "${1:-help}" in
+  setup) cmd_setup ;;
   install) cmd_install ;;
   loader) cmd_loader ;;
   status) cmd_status ;;
