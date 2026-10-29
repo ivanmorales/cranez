@@ -4,7 +4,7 @@ Arc's best features, rebuilt for [Zen](https://zen-browser.app) on macOS.
 
 | Script | What it does |
 |---|---|
-| `arc-pip-on-blur.uc.js` | A playing video pops into Picture-in-Picture when you switch to another app, and goes back when you return |
+| `arc-pip-on-blur.uc.js` | A playing video pops into Picture-in-Picture when Zen goes out of sight (another macOS Space, covered, minimized), and goes back when you return. Using an app on another monitor leaves it alone |
 | `pip-swipe.uc.js` | Swipe the PiP window around with a Magic Mouse or trackpad: fling, snap to corners, hop to the next monitor, never off screen |
 | `little-arc.uc.js` | Links opened from other apps (Slack, terminal…) open in a small window on the monitor you clicked from; ⌘O moves it into Zen |
 | `tab-expiry.uc.js` | Closes tabs you haven't opened in 12h (like Arc), unless they're pinned, an Essential, bookmarked, playing audio, or have unsaved input |

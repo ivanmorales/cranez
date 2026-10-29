@@ -19,6 +19,7 @@ else
   echo "  skip  shellcheck not installed (brew install shellcheck)"
 fi
 
+step "arc-pip";     node tests/arc-pip.test.js || status=1
 step "pip-swipe";   node tests/pip-swipe.test.js || status=1
 step "tab-expiry";  node tests/tab-expiry.test.js || status=1
 step "little-arc";  node tests/little-arc.test.js || status=1

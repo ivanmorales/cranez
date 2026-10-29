@@ -38,9 +38,11 @@ Owner uses it daily on multiple Macs with 3 monitors and a Magic Mouse; Zen's to
 
 ## Tests
 
-`bash tests/run.sh` (CI runs it too). Covers: syntax of all scripts, shellcheck, `pip-swipe`
-gestures on a fake 3-monitor desktop (fling caps, monitor hops, corner snap, never off screen),
-`tab-expiry` keep/close rules, `little-arc` opening external links in the current space's container, the installer end to end on a fake Mac layout, and `cranez.sh
+`bash tests/run.sh` (CI runs it too). Covers: syntax of all scripts, shellcheck,
+`arc-pip-on-blur` popping out only when the window is out of sight, `pip-swipe` gestures on a
+fake 3-monitor desktop (fling caps, monitor hops, corner snap, never off screen), `tab-expiry`
+keep/close rules, `little-arc` (external links in the current space's container, chromeless
+little window, drag strip), the installer end to end on a fake Mac layout, and `cranez.sh
 setup` + `bin/cranez` on a shared fake Mac (`tests/fake-mac.sh`: stubbed `brew`, `open`,
 `osascript`, `launchctl`, an App-Management-blocking `cp`, a local bare repo as GitHub).
 Add a test case whenever you change behaviour those suites cover.
@@ -54,7 +56,9 @@ the Gatekeeper prompt, Firefox Sync carrying cranez prefs, a real `brew install`
 - **arc-pip-on-blur**: `PictureInPicture` module (`isOriginatingBrowser`, `weakWinToBrowser`,
   `weakPipToWin`, `closeSinglePipWindow`), `PictureInPictureLauncher` actor message
   `PictureInPicture:AutoToggle` (sending it to a video already in PiP toggles it OFF, hence the
-  guard), `ChromeUtils.nondeterministicGetWeakMapKeys`.
+  guard), `ChromeUtils.nondeterministicGetWeakMapKeys`, macOS occlusion via
+  `window.isFullyOccluded` + `occlusionstatechange` and `windowState` + `sizemodechange`
+  (falls back to `deactivate`/`activate` if `isFullyOccluded` is missing).
 - **pip-swipe**: runs in `chrome://global/content/pictureinpicture/player.xhtml`;
   `nsIScreenManager`; js-ctypes → `NSEvent.mouseLocation`, `CGWarpMouseCursorPosition`.
   Firefox doesn't expose macOS momentum phase, so momentum is detected heuristically (steadily
@@ -81,7 +85,7 @@ the Gatekeeper prompt, Firefox Sync carrying cranez prefs, a real `brew install`
 ## Decisions already made (don't redo)
 
 - Tab-switch PiP uses Firefox's native pref (in `zen-prefs.js`); `arc-pip-on-blur` only handles
-  switching to another app.
+  the window going out of sight (like Arc: not on focusing an app on another monitor).
 - Copy-URL shortcut is Zen's built-in ⌘⇧C; dev-bar doesn't add one.
 - dev-bar v1 was inserted into `.browserContainer`; Zen lays that out differently, so v2 uses a
   fixed-position bar measured to the page area plus padding on `.browserStack`.

@@ -1,23 +1,31 @@
 // ==UserScript==
 // @name           arc-pip-on-blur
-// @description    Arc-style auto Picture-in-Picture when Zen loses focus to another app (PoC)
+// @description    Arc-style auto Picture-in-Picture when the Zen window goes out of sight (PoC)
 // @cranez-name    PiP on Blur
-// @cranez-blurb   ⌘Tab away and your video tags along in Picture-in-Picture
+// @cranez-blurb   video out of sight (other Space, covered, minimized)? it tags along in PiP
 // @include        main
 // ==/UserScript==
 
 /*
  * How it works
- * - Listens for the browser window's "deactivate" event (OS focus left this window).
- * - After a short delay, if focus left the app entirely (not just moved to another
- *   Zen window), asks Firefox's own PictureInPictureLauncher actor to "AutoToggle",
- *   the same message the native tab-switch auto-PiP sends. The content side only
- *   opens PiP if it finds a playing, PiP-eligible <video>.
- * - On "activate", closes any player this script opened for the still-selected tab.
+ * - Like Arc, PiP happens when you can no longer see the video, not when Zen merely
+ *   loses focus: using an app on another monitor leaves the video in the browser.
+ * - macOS tells Gecko when the window is fully hidden (another Space on that screen,
+ *   covered by other windows, minimized): "occlusionstatechange" / "sizemodechange",
+ *   read via window.isFullyOccluded and window.windowState.
+ * - After a short delay, if the window is still hidden, asks Firefox's own
+ *   PictureInPictureLauncher actor to "AutoToggle", the same message the native
+ *   tab-switch auto-PiP sends. The content side only opens PiP if it finds a playing,
+ *   PiP-eligible <video>.
+ * - When the window is visible again, closes any player this script opened for the
+ *   still-selected tab.
+ * - Switching tabs or Zen spaces is Firefox's own tab-switch PiP (zen-prefs.js).
+ * - If this Gecko has no occlusion API, falls back to the old trigger (focus left Zen
+ *   for another app) and logs that once.
  *
  * Optional prefs (about:config, all optional):
  *   arcpip.enabled        bool  default true
- *   arcpip.delay_ms       int   default 300   wait before popping out (Cmd+Tab flicker guard)
+ *   arcpip.delay_ms       int   default 300   wait before popping out (flicker guard)
  *   arcpip.require_audio  bool  default true  only fire if the tab is audibly playing
  *   arcpip.debug          bool  default false log to Browser Console
  *
@@ -28,6 +36,7 @@
 (() => {
   "use strict";
 
+  const VERSION = "v2-out-of-sight";
   const PLAYER_TYPE = "Toolkit:PictureInPicture";
   const SUBFRAME_FALLBACK_MS = 400;
 
@@ -65,7 +74,33 @@
     }
   }
 
-  function onDeactivate() {
+  const hasOcclusion = typeof window.isFullyOccluded === "boolean";
+
+  function isHidden() {
+    if (!hasOcclusion) {
+      // Fallback trigger: focus left Zen for another app.
+      return !Services.focus.activeWindow;
+    }
+    return window.isFullyOccluded || window.windowState === window.STATE_MINIMIZED;
+  }
+
+  let hidden = false;
+
+  // now: true/false from the fallback's deactivate/activate events; otherwise read it.
+  function onVisibilityChange(now = isHidden()) {
+    if (now === hidden) {
+      return;
+    }
+    hidden = now;
+    log(hidden ? "window out of sight" : "window visible again");
+    if (hidden) {
+      schedulePip();
+    } else {
+      onVisible();
+    }
+  }
+
+  function schedulePip() {
     if (!bool("arcpip.enabled", true)) {
       return;
     }
@@ -79,9 +114,9 @@
   function maybePip() {
     timer = null;
 
-    // Focus moved to another Zen window (or devtools): not an app switch.
-    if (Services.focus.activeWindow) {
-      log("focus stayed inside Zen, skipping");
+    // Visible again before the delay ran out (Space-switch flicker, quick ⌘Tab back).
+    if (!isHidden()) {
+      log("visible again, skipping");
       return;
     }
 
@@ -138,7 +173,7 @@
     playerWin.close();
   }
 
-  function onActivate() {
+  function onVisible() {
     clearTimeout(timer);
     timer = null;
     if (!pending) {
@@ -169,15 +204,30 @@
   }
 
   function init() {
-    window.addEventListener("deactivate", onDeactivate);
-    window.addEventListener("activate", onActivate);
+    console.info(`[arc-pip] ${VERSION} loaded`);
+    // Without an occlusion API, "out of sight" falls back to "focus left Zen".
+    const events = hasOcclusion
+      ? ["occlusionstatechange", "sizemodechange"]
+      : ["deactivate", "activate"];
+    if (!hasOcclusion) {
+      console.error("[arc-pip] window.isFullyOccluded not available; popping out on app switch instead");
+    }
+    // Fallback: deactivate starts the delay; maybePip re-reads focus once it runs out,
+    // so a move to another Zen window (focus still inside Zen) is skipped.
+    const handler = hasOcclusion
+      ? () => onVisibilityChange()
+      : e => onVisibilityChange(e.type === "deactivate");
+    for (const type of events) {
+      window.addEventListener(type, handler);
+    }
     window.addEventListener(
       "unload",
       () => {
         clearTimeout(timer);
         pending = null;
-        window.removeEventListener("deactivate", onDeactivate);
-        window.removeEventListener("activate", onActivate);
+        for (const type of events) {
+          window.removeEventListener(type, handler);
+        }
       },
       { once: true }
     );
