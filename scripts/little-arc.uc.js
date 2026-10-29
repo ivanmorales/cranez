@@ -18,6 +18,9 @@
  * - Links clicked inside Zen are untouched; only OS-external opens are rerouted.
  * - The little window opens in the container of the Zen space you're in (e.g. a Work
  *   space's container, so you're signed in), and ⌘O keeps it.
+ * - Little windows have no URL bar and no macOS title bar: the page goes up to the top
+ *   edge (traffic lights stay). A thin strip along the top drags the window: invisible
+ *   until hovered, then it highlights and shows a hand cursor.
  *
  * Optional prefs (about:config):
  *   arclittle.enabled         bool  default true
@@ -39,7 +42,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "v4-space-container";
+  const VERSION = "v6-drag-strip";
   const NAME_PREFIX = "arc-little-";
   const XHTML_NS = "http://www.w3.org/1999/xhtml";
 
@@ -282,6 +285,70 @@
     }
   }
 
+  // Firefox gives popup windows a system title bar (tab-bar-visibility.js keeps calling
+  // CustomTitlebar.allowedBy("non-popup", false)). Ignore that one veto here, so the page
+  // draws into the title bar like a normal window; every other reason still applies.
+  function hideTitlebar() {
+    const ct = window.CustomTitlebar;
+    if (!ct?.allowedBy) {
+      console.error("[little-arc] CustomTitlebar not available; keeping the title bar");
+      return;
+    }
+    const allowedBy = ct.allowedBy.bind(ct);
+    ct.allowedBy = (condition, allow) => allowedBy(condition, condition === "non-popup" || allow);
+    ct.allowedBy("non-popup", true);
+  }
+
+  // Zen moves the URL bar out of #navigator-toolbox into its own row, which Zen's popup
+  // rule doesn't hide, so hide that row (and the toolbox) in little windows.
+  function addStyles() {
+    const css = `
+      :root[little-arc] :is(#zen-appcontent-navbar-wrapper, #navigator-toolbox) {
+        visibility: collapse !important;
+      }
+      #little-arc-drag {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 12px;
+        z-index: 2147483646;
+        -moz-window-dragging: no-drag;
+        background: transparent;
+        cursor: grab;
+        transition: background-color 120ms ease;
+      }
+      #little-arc-drag:hover {
+        background: rgba(128, 128, 128, 0.28);
+      }
+      #little-arc-drag[dragging] {
+        background: rgba(128, 128, 128, 0.4);
+        cursor: grabbing;
+      }
+      #little-arc-promote {
+        position: fixed;
+        right: 12px;
+        bottom: 12px;
+        z-index: 2147483647;
+        -moz-window-dragging: no-drag;
+        padding: 5px 12px;
+        border: 0;
+        border-radius: 999px;
+        background: rgba(20, 20, 20, 0.78);
+        color: #fff;
+        font: menu;
+        font-size: 12px;
+        cursor: pointer;
+        opacity: 0.85;
+      }
+      #little-arc-promote:hover { opacity: 1; }
+    `;
+    window.windowUtils.loadSheetUsingURIString(
+      "data:text/css;charset=utf-8," + encodeURIComponent(css),
+      window.windowUtils.AUTHOR_SHEET
+    );
+  }
+
   let promoting = false;
 
   function promote() {
@@ -328,31 +395,39 @@
     }, 0);
   }
 
-  function addPromoteButton() {
-    const css = `
-      #little-arc-promote {
-        position: fixed;
-        right: 12px;
-        bottom: 12px;
-        z-index: 2147483647;
-        -moz-window-dragging: no-drag;
-        padding: 5px 12px;
-        border: 0;
-        border-radius: 999px;
-        background: rgba(20, 20, 20, 0.78);
-        color: #fff;
-        font: menu;
-        font-size: 12px;
-        cursor: pointer;
-        opacity: 0.85;
+  // Moves the window ourselves: a native -moz-window-dragging region over the page
+  // area only caught some clicks, and it hides the hover/cursor feedback.
+  function addDragStrip() {
+    const strip = document.createElementNS(XHTML_NS, "div");
+    strip.id = "little-arc-drag";
+    strip.addEventListener("pointerdown", e => {
+      if (e.button !== 0) {
+        return;
       }
-      #little-arc-promote:hover { opacity: 1; }
-    `;
-    window.windowUtils.loadSheetUsingURIString(
-      "data:text/css;charset=utf-8," + encodeURIComponent(css),
-      window.windowUtils.AUTHOR_SHEET
-    );
+      e.preventDefault();
+      const dx = e.screenX - window.screenX;
+      const dy = e.screenY - window.screenY;
+      const move = ev => window.moveTo(ev.screenX - dx, ev.screenY - dy);
+      const end = () => {
+        strip.removeEventListener("pointermove", move);
+        strip.removeEventListener("pointerup", end);
+        strip.removeEventListener("lostpointercapture", end);
+        strip.removeAttribute("dragging");
+      };
+      try {
+        strip.setPointerCapture(e.pointerId);
+      } catch (err) {
+        log("pointer capture failed; dragging without it", err);
+      }
+      strip.setAttribute("dragging", "true");
+      strip.addEventListener("pointermove", move);
+      strip.addEventListener("pointerup", end);
+      strip.addEventListener("lostpointercapture", end);
+    });
+    (document.body ?? document.documentElement).appendChild(strip);
+  }
 
+  function addPromoteButton() {
     const btn = document.createElementNS(XHTML_NS, "button");
     btn.id = "little-arc-promote";
     btn.textContent = "Open in Zen  \u2318O";
@@ -396,7 +471,7 @@
     console.info(`[little-arc] ${VERSION} loaded (${isLittle() ? "little" : "main"} window)`);
     if (isLittle()) {
       enforcePlacement("delayed-startup");
-      document.documentElement.setAttribute("little-arc", "true");
+      addDragStrip();
       addPromoteButton();
       bindKeys();
       log("little window ready");
@@ -405,10 +480,18 @@
     }
   }
 
-  // As early as possible in a little window: no saved geometry, our placement only.
+  // As early as possible in a little window: no saved geometry, our placement only,
+  // and no title bar or URL bar flashing in before they're hidden.
   if (isLittle()) {
     disablePersistence();
     enforcePlacement("early");
+    document.documentElement.setAttribute("little-arc", "true");
+    try {
+      addStyles();
+      hideTitlebar();
+    } catch (e) {
+      console.error("[little-arc] could not hide the window chrome", e);
+    }
   }
 
   if (window.gBrowserInit?.delayedStartupFinished) {

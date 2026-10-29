@@ -63,6 +63,8 @@ the Gatekeeper prompt, Firefox Sync carrying cranez prefs, a real `brew install`
   whole object is replaced with a forwarding Proxy), `nsIBrowserDOMWindow.OPEN_EXTERNAL`,
   `gZenWorkspaces.getCurrentSpaceContainerId()` plus `window.arguments[5]` (userContextId) and
   `[8]` (triggeringPrincipal) as `browser-init.js` reads them for the little window's container,
+  `CustomTitlebar.allowedBy("non-popup", …)` (from `tab-bar-visibility.js`; little windows ignore
+  that veto to drop the macOS title bar), Zen's `#zen-appcontent-navbar-wrapper` (URL bar row),
   `BrowserWindowTracker.getTopWindow`, `gBrowser.adoptTab`, js-ctypes cursor position. Little
   windows are popup-style (`toolbar.visible == false`); placement is encoded in `window.name`.
 - **tab-expiry**: `tab.lastAccessed`, Places DB (`moz_bookmarks` ⋈ `moz_places`),

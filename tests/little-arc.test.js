@@ -56,6 +56,69 @@ function setup(zen) {
 
 const space = containerTabId => ({ getCurrentSpaceContainerId: () => containerTabId });
 
+// A little window as Firefox builds it: a popup, so tab-bar-visibility.js keeps vetoing a
+// custom (drawn-into) title bar with CustomTitlebar.allowedBy("non-popup", false).
+// titlebar: what CustomTitlebar looks like (null = missing).
+function setupLittle(titlebar = "real") {
+  const sheets = [];
+  const errors = [];
+  const added = [];
+  const attrs = {};
+  const root = {
+    setAttribute: (k, v) => { attrs[k] = v; },
+    removeAttribute: k => { delete attrs[k]; },
+    hasAttribute: k => k in attrs,
+    appendChild: el => added.push(el),
+  };
+  const disallowed = {};
+  const CustomTitlebar = titlebar === "real" ? {
+    allowedBy(condition, allow) {
+      if (allow) delete disallowed[condition]; else disallowed[condition] = null;
+    },
+  } : titlebar;
+  const moves = [];
+  const window = {
+    name: "arc-little-0_25_560_760_1",
+    screenX: 0, screenY: 25,
+    gBrowserInit: { delayedStartupFinished: true },
+    CustomTitlebar,
+    windowUtils: { AUTHOR_SHEET: 2, loadSheetUsingURIString: uri => sheets.push(decodeURIComponent(uri)) },
+    addEventListener() {},
+    moveTo: (x, y) => { moves.push([x, y]); window.screenX = x; window.screenY = y; },
+  };
+  const document = {
+    documentElement: root,
+    body: null,
+    createElementNS: () => {
+      const on = {};
+      const el = { style: {}, attrs: {}, captured: null };
+      el.addEventListener = (type, fn) => { (on[type] ||= []).push(fn); };
+      el.removeEventListener = (type, fn) => { on[type] = (on[type] || []).filter(f => f !== fn); };
+      el.fire = (type, e = {}) => {
+        const ev = { button: 0, pointerId: 1, preventDefault() {}, ...e };
+        for (const fn of [...(on[type] || [])]) fn(ev);
+      };
+      el.setAttribute = (k, v) => { el.attrs[k] = v; };
+      el.removeAttribute = k => { delete el.attrs[k]; };
+      el.setPointerCapture = id => { el.captured = id; };
+      el.releasePointerCapture = () => { el.captured = null; };
+      return el;
+    },
+  };
+  const sandbox = {
+    window,
+    document,
+    Services: {
+      prefs: { getBoolPref: (_k, d) => d, getIntPref: (_k, d) => d },
+      obs: { addObserver() {}, removeObserver() {} },
+    },
+    console: { info() {}, log() {}, error: (...a) => errors.push(a.join(" ")) },
+  };
+  new Function(...Object.keys(sandbox), SRC)(...Object.values(sandbox));
+  const strip = () => added.find(el => el.id === "little-arc-drag");
+  return { CustomTitlebar, disallowed, sheets, added, errors, attrs, moves, strip };
+}
+
 const cases = [
   ["link opens in the container of the space you're in (Work)", () => {
     const t = setup(space(2));
@@ -83,6 +146,56 @@ const cases = [
     assert.strictEqual(t.opened.length, 1);
     assert.strictEqual(t.args()[5], 0);
     assert.ok(t.errors.some(e => e.includes("[little-arc]")), "logs with the [little-arc] prefix");
+  }],
+  ["little window: no system title bar, even after Firefox re-applies its popup rule", () => {
+    const t = setupLittle();
+    t.CustomTitlebar.allowedBy("non-popup", false);
+    assert.ok(!("non-popup" in t.disallowed), "the popup veto must not stick in a little window");
+    t.CustomTitlebar.allowedBy("pref", false);
+    assert.ok("pref" in t.disallowed, "other reasons (e.g. the user's titlebar pref) still apply");
+  }],
+  ["little window: Zen's URL bar row is hidden", () => {
+    const t = setupLittle();
+    const css = t.sheets.join("\n");
+    assert.match(css, /:root\[little-arc\][^{]*#zen-appcontent-navbar-wrapper[^{]*\{[^}]*(display:\s*none|visibility:\s*collapse)/);
+    assert.strictEqual(t.attrs["little-arc"], "true");
+  }],
+  ["little window: dragging the top strip moves the window with the pointer", () => {
+    const t = setupLittle();
+    const strip = t.strip();
+    assert.ok(strip, "drag strip added");
+    strip.fire("pointerdown", { screenX: 100, screenY: 30 });
+    assert.strictEqual(strip.captured, 1, "captures the pointer so fast drags don't slip off");
+    assert.strictEqual(strip.attrs.dragging, "true");
+    strip.fire("pointermove", { screenX: 150, screenY: 80 });
+    strip.fire("pointermove", { screenX: 160, screenY: 70 });
+    assert.deepStrictEqual(t.moves, [[50, 75], [60, 65]]);
+    strip.fire("pointerup", { screenX: 160, screenY: 70 });
+    strip.fire("lostpointercapture");
+    strip.fire("pointermove", { screenX: 400, screenY: 400 });
+    assert.strictEqual(t.moves.length, 2, "stops following after release");
+    assert.ok(!("dragging" in strip.attrs));
+  }],
+  ["little window: right-click on the strip doesn't drag", () => {
+    const t = setupLittle();
+    const strip = t.strip();
+    strip.fire("pointerdown", { button: 2, screenX: 100, screenY: 30 });
+    strip.fire("pointermove", { screenX: 150, screenY: 80 });
+    assert.strictEqual(t.moves.length, 0);
+  }],
+  ["little window: strip is invisible until hovered, then highlights with a hand cursor", () => {
+    const css = setupLittle().sheets.join("\n");
+    const rule = sel => (css.match(new RegExp(sel.replace(/[[\]]/g, "\\$&") + "\\s*\\{([^}]*)\\}")) || [])[1] || "";
+    assert.match(rule("#little-arc-drag"), /background(-color)?:\s*transparent/);
+    assert.match(rule("#little-arc-drag"), /cursor:\s*grab\b/);
+    assert.match(rule("#little-arc-drag:hover"), /background(-color)?:\s*rgba\(/);
+    assert.match(rule("#little-arc-drag[dragging]"), /cursor:\s*grabbing/);
+    assert.doesNotMatch(rule("#little-arc-drag"), /-moz-window-dragging:\s*drag/, "native drag would swallow the pointer events");
+  }],
+  ["little window without CustomTitlebar still works (keeps the title bar)", () => {
+    const t = setupLittle(null);
+    assert.ok(t.added.some(el => el.id === "little-arc-promote"), "promote button still added");
+    assert.ok(t.errors.some(e => e.includes("[little-arc]")), "logs why the title bar stays");
   }],
   ["links clicked inside Zen are untouched", () => {
     const t = setup(space(2));
