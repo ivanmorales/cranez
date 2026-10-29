@@ -41,6 +41,8 @@ function setup(prefs) {
     tab("selected", "https://example.com/a", 0, { selected: true }),
     tab("old", "https://example.com/old", 30),
     tab("fresh", "https://example.com/fresh", 2),
+    tab("yesterday-evening", "https://example.com/evening", 13),
+    tab("late-last-night", "https://example.com/night", 11),
     tab("pinned", "https://example.com/pinned", 99, { pinned: true }),
     tab("essential", "https://example.com/ess", 99, { attrs: ["zen-essential"] }),
     tab("bookmarked-diff-hash", "https://mail.google.com/mail/u/0/#label/x", 50),
@@ -100,7 +102,7 @@ function setup(prefs) {
   return { runNow, removed, info, archived };
 }
 
-const KEPT_ALWAYS = ["selected", "fresh", "pinned", "essential", "bookmarked-diff-hash", "audio", "split-view", "unsaved", "glance"];
+const KEPT_ALWAYS = ["selected", "fresh", "late-last-night", "pinned", "essential", "bookmarked-diff-hash", "audio", "split-view", "unsaved", "glance"];
 
 const cases = [
   ["dry run lists expired tabs and closes nothing", async () => {
@@ -108,20 +110,32 @@ const cases = [
     await t.runNow();
     assert.deepStrictEqual(t.removed, []);
     const listed = t.info.filter(l => l.includes("DRY RUN would close"));
-    assert.strictEqual(listed.length, 3, listed.join("\n"));
+    assert.strictEqual(listed.length, 4, listed.join("\n"));
     assert.ok(!listed.some(l => l.includes("unsaved")), "dry run should skip pages with unsaved input");
   }],
   ["real run closes only old, unbookmarked, unprotected tabs", async () => {
     const t = setup({});
     await t.runNow();
-    assert.deepStrictEqual(t.removed.sort(), ["bookmarked-path-with-query", "old", "pending"].sort());
+    assert.deepStrictEqual(t.removed.sort(), ["bookmarked-path-with-query", "old", "pending", "yesterday-evening"].sort());
     for (const k of KEPT_ALWAYS) assert.ok(!t.removed.includes(k), `${k} should be kept`);
-    assert.strictEqual(t.archived.join("").trim().split("\n").length, 3);
+    assert.strictEqual(t.archived.join("").trim().split("\n").length, 4);
   }],
   ["bookmark_ignore_query keeps the same page with a different ?query", async () => {
     const t = setup({ "tabexpiry.bookmark_ignore_query": true });
     await t.runNow();
-    assert.deepStrictEqual(t.removed.sort(), ["old", "pending"]);
+    assert.deepStrictEqual(t.removed.sort(), ["old", "pending", "yesterday-evening"]);
+  }],
+  ["default expiry is 12h like Arc: yesterday's tabs go, last night's stay", async () => {
+    const t = setup({});
+    await t.runNow();
+    assert.ok(t.removed.includes("yesterday-evening"), "13h idle closes by default");
+    assert.ok(!t.removed.includes("late-last-night"), "11h idle is kept by default");
+  }],
+  ["tabexpiry.minutes still overrides the default", async () => {
+    const t = setup({ "tabexpiry.minutes": 1440 });
+    await t.runNow();
+    assert.ok(!t.removed.includes("yesterday-evening"), "13h idle is kept with a 24h setting");
+    assert.ok(t.removed.includes("old"));
   }],
   ["keep_bookmarked=false closes bookmarked tabs too", async () => {
     const t = setup({ "tabexpiry.keep_bookmarked": false });

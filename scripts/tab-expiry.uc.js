@@ -1,15 +1,15 @@
 // ==UserScript==
 // @name           tab-expiry
-// @description    Arc-style tab expiration: close tabs untouched for 24h unless pinned, an Essential, or bookmarked
+// @description    Arc-style tab expiration: close tabs untouched for 12h unless pinned, an Essential, or bookmarked
 // @cranez-name    Tab Expirererer
-// @cranez-blurb   untouched for 24h? gone. Pinned, bookmarked & noisy tabs live
+// @cranez-blurb   untouched for 12h? gone. Pinned, bookmarked & noisy tabs live
 // @include        main
 // ==/UserScript==
 
 /*
  * How it works
  * - Every few minutes, each normal Zen window looks at all of its tabs (every workspace)
- *   and closes the ones you haven't opened for longer than the expiry time (24h default).
+ *   and closes the ones you haven't opened for longer than the expiry time (12h default, like Arc).
  *   The clock is Firefox's own "last accessed" time, which survives restarts and resets
  *   every time you visit the tab.
  * - Never closed:
@@ -24,7 +24,7 @@
  *
  * Prefs (about:config, all optional):
  *   tabexpiry.enabled                bool  default true
- *   tabexpiry.minutes                int   default 1440   expiry time (1440 = 24h)
+ *   tabexpiry.minutes                int   default 720    expiry time (720 = 12h, 1440 = 24h)
  *   tabexpiry.check_minutes          int   default 10     how often to check
  *   tabexpiry.keep_bookmarked        bool  default true
  *   tabexpiry.bookmark_ignore_query  bool  default false
@@ -37,7 +37,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "v1";
+  const VERSION = "v2-12h";
   const bool = (p, d) => Services.prefs.getBoolPref(p, d);
   const int = (p, d) => Services.prefs.getIntPref(p, d);
   const log = (...a) => bool("tabexpiry.debug", false) && console.log("[tab-expiry]", ...a);
@@ -210,7 +210,7 @@
     }
     sweeping = true;
     try {
-      const ttl = Math.max(1, int("tabexpiry.minutes", 1440)) * 60_000;
+      const ttl = Math.max(1, int("tabexpiry.minutes", 720)) * 60_000;
       const dry = bool("tabexpiry.dry_run", false);
       const now = Date.now();
 
@@ -288,7 +288,7 @@
 
   function interval() {
     const check = Math.max(1, int("tabexpiry.check_minutes", 10));
-    const expiry = Math.max(1, int("tabexpiry.minutes", 1440));
+    const expiry = Math.max(1, int("tabexpiry.minutes", 720));
     // With short test expiries, check often enough to notice them.
     return Math.max(1, Math.min(check, Math.ceil(expiry / 4))) * 60_000;
   }
