@@ -42,9 +42,11 @@ Open Zen. The Browser Console (⌘⇧J) shows a `loaded` line for each script.
 Install Zen (`yay -S zen-browser-bin`), then clone this repo and run setup from the clone:
 
 ```
-git clone https://github.com/ivanmorales/cranez.git ~/cranez
+git clone -b linux https://github.com/ivanmorales/cranez.git ~/cranez
 ~/cranez/cranez.sh setup
 ```
+
+(Linux support lives on the `linux` branch until it's merged into `main`; drop `-b linux` then.)
 
 Setup builds `packaging/arch/PKGBUILD` from your clone and installs it with pacman (it asks
 for your password). That package puts `cranez` on your PATH and the loader into Zen's install
