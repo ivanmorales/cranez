@@ -1,6 +1,6 @@
 # cranez
 
-Arc's best features, rebuilt for [Zen](https://zen-browser.app) on macOS.
+Arc's best features, rebuilt for [Zen](https://zen-browser.app) on macOS and Arch Linux.
 
 | Script | What it does |
 |---|---|
@@ -37,6 +37,38 @@ Two things only you can do, once per Mac:
 
 Open Zen. The Browser Console (⌘⇧J) shows a `loaded` line for each script.
 
+## Install on Arch Linux
+
+Install Zen (`yay -S zen-browser-bin`), then clone this repo and run setup from the clone:
+
+```
+git clone https://github.com/ivanmorales/cranez.git ~/cranez
+~/cranez/cranez.sh setup
+```
+
+Setup builds `packaging/arch/PKGBUILD` from your clone and installs it with pacman (it asks
+for your password). That package puts `cranez` on your PATH and the loader into Zen's install
+folder (`/opt/zen-browser-bin`). pacman owns the loader, so Zen updates keep it: there's no
+update watcher and no `cranez loader` step on Linux. If Zen has no profile yet, setup opens it
+once and closes it; then it installs the scripts and prefs into your profile (`~/.zen`).
+
+To update: `cranez update`. It runs `git pull` in the clone, rebuilds the package if the commit
+changed, and reinstalls the scripts. Quit Zen first. To build by hand instead:
+`cd ~/cranez/packaging/arch && makepkg -si && cranez install`. `cranez uninstall` also removes
+the package.
+
+On Linux the shortcuts use Ctrl where macOS uses ⌘ (Ctrl+O, Ctrl+Shift+J). ^Dev Bar keeps
+Ctrl+D, so it takes over Firefox's "Bookmark this page".
+
+**Wayland vs X11.** On Wayland, apps can't move their own windows or the cursor. So PiP
+Swiper turns itself off (the Browser Console says why), and Just the tip opens its little
+window wherever the compositor puts it. Its drag strip hands the move to the window manager, so
+dragging should still work. To get both, run Zen through
+XWayland: set `MOZ_ENABLE_WAYLAND=0` for Zen, e.g. in `~/.config/environment.d/zen.conf`.
+`about:support` → Window Protocol shows which one Zen uses. PiP on Blur relies on the desktop
+telling Zen the window is hidden. Minimizing works on X11; switching workspaces depends on the
+desktop. Set `arcpip.debug` to true to see what Zen gets.
+
 ## Updating
 
 Run `cranez setup` again any time: it pulls the latest scripts from GitHub and reinstalls them.
@@ -61,14 +93,15 @@ defaults, see Development.
 
 | | |
 |---|---|
-| `cranez setup` | everything; run again to update |
+| `cranez setup` | everything; run again to update (Mac) |
+| `cranez update` | Linux: `git pull` the clone, rebuild the package, reinstall |
 | `cranez status` | what's installed / out of date |
 | `cranez loader` | re-add the loader after a Zen update |
-| `cranez watch-on` / `watch-off` | background update helper |
+| `cranez watch-on` / `watch-off` | background update helper (Mac only) |
 | `cranez uninstall` | remove everything cranez added |
 | `cranez --version` | version of the `cranez` command |
 
-Overrides: `ZEN_APP=/path/to/Zen.app`, `ZEN_PROFILE=/path/to/profile`.
+Overrides: `ZEN_APP=/path/to/Zen.app` (Linux: Zen's install folder), `ZEN_PROFILE=/path/to/profile`.
 
 ## Moving a Mac that already runs cranez from a clone
 
@@ -118,13 +151,15 @@ bash tests/run.sh
 Runs without Zen or macOS: syntax checks, shellcheck, a simulated 3-monitor desktop for
 `pip-swipe`, a mixed-tab simulation for `tab-expiry`, and end-to-end runs of the installer,
 `cranez.sh setup` and the `cranez` command on a fake Mac (stubbed `brew`, `open`, `osascript`,
-`launchctl`, and a local repo standing in for GitHub). In-browser behaviour still needs a manual
-check in Zen; see `CLAUDE.md`.
+`launchctl`, and a local repo standing in for GitHub), and the same on a fake Arch box (stubbed
+`makepkg`, `pacman`, `sudo`; the real PKGBUILD's `package()`). In-browser behaviour still needs a
+manual check in Zen; see `CLAUDE.md`.
 
 ## Layout
 
 ```
 bin/cranez                the command Homebrew installs (keeps a checkout, forwards to cranez.sh)
+packaging/arch/           Arch package built from your clone (PKGBUILD, the `cranez` it installs)
 cranez.sh                 installer / engine
 zen-prefs.js              defaults for a brand-new Mac
 scripts/*.uc.js           the scripts

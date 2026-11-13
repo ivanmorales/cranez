@@ -11,7 +11,8 @@ const OPEN_EXTERNAL = 2;
 const SYSTEM = { system: true };
 
 // zen: what gZenWorkspaces looks like in this window (undefined = no Zen spaces API).
-function setup(zen) {
+// opts.os / opts.protocol: what Services.appinfo.OS and nsIGfxInfo.windowProtocol report.
+function setup(zen, opts = {}) {
   const opened = [];
   const normal = [];
   const errors = [];
@@ -34,13 +35,17 @@ function setup(zen) {
       prefs: { getBoolPref: (_k, d) => d, getIntPref: (_k, d) => d },
       obs: { addObserver() {}, removeObserver() {} },
       scriptSecurityManager: { getSystemPrincipal: () => SYSTEM },
+      appinfo: opts.os ? { OS: opts.os } : undefined,
     },
     ChromeUtils: {
       generateQI: () => () => {},
       importESModule: () => { throw new Error("no ctypes here"); },
     },
     Ci: { nsIBrowserDOMWindow: { OPEN_EXTERNAL } },
-    Cc: { "@mozilla.org/gfx/screenmanager;1": { getService: () => ({ primaryScreen: screen, screenForRect: () => screen }) } },
+    Cc: {
+      "@mozilla.org/gfx/screenmanager;1": { getService: () => ({ primaryScreen: screen, screenForRect: () => screen }) },
+      "@mozilla.org/gfx/info;1": { getService: () => ({ windowProtocol: opts.protocol ?? "" }) },
+    },
     AppConstants: { BROWSER_CHROME_URL: "chrome://browser/content/browser.xhtml" },
     console: { info() {}, log() {}, error: (...a) => errors.push(a.join(" ")) },
   };
@@ -59,7 +64,8 @@ const space = containerTabId => ({ getCurrentSpaceContainerId: () => containerTa
 // A little window as Firefox builds it: a popup, so tab-bar-visibility.js keeps vetoing a
 // custom (drawn-into) title bar with CustomTitlebar.allowedBy("non-popup", false).
 // titlebar: what CustomTitlebar looks like (null = missing).
-function setupLittle(titlebar = "real") {
+// opts.os: what Services.appinfo.OS reports; opts.wm: give the window beginWindowMove.
+function setupLittle(titlebar = "real", opts = {}) {
   const sheets = [];
   const errors = [];
   const added = [];
@@ -86,6 +92,8 @@ function setupLittle(titlebar = "real") {
     addEventListener() {},
     moveTo: (x, y) => { moves.push([x, y]); window.screenX = x; window.screenY = y; },
   };
+  const wmMoves = [];
+  if (opts.wm) window.beginWindowMove = e => wmMoves.push(e);
   const document = {
     documentElement: root,
     body: null,
@@ -111,12 +119,14 @@ function setupLittle(titlebar = "real") {
     Services: {
       prefs: { getBoolPref: (_k, d) => d, getIntPref: (_k, d) => d },
       obs: { addObserver() {}, removeObserver() {} },
+      appinfo: opts.os ? { OS: opts.os } : undefined,
     },
     console: { info() {}, log() {}, error: (...a) => errors.push(a.join(" ")) },
   };
   new Function(...Object.keys(sandbox), SRC)(...Object.values(sandbox));
   const strip = () => added.find(el => el.id === "little-arc-drag");
-  return { CustomTitlebar, disallowed, sheets, added, errors, attrs, moves, strip };
+  const button = () => added.find(el => el.id === "little-arc-promote");
+  return { CustomTitlebar, disallowed, sheets, added, errors, attrs, moves, wmMoves, strip, button };
 }
 
 const cases = [
@@ -196,6 +206,36 @@ const cases = [
     const t = setupLittle(null);
     assert.ok(t.added.some(el => el.id === "little-arc-promote"), "promote button still added");
     assert.ok(t.errors.some(e => e.includes("[little-arc]")), "logs why the title bar stays");
+  }],
+  ["Linux Wayland: link still opens little, on the current window's monitor, no error", () => {
+    const t = setup(space(2), { os: "Linux", protocol: "wayland" });
+    t.click("https://example.com/");
+    assert.strictEqual(t.opened.length, 1);
+    assert.deepStrictEqual(t.errors, [], "Wayland has no cursor position; that's expected, not an error");
+  }],
+  ["macOS: promote button says ⌘O", () => {
+    assert.match(setupLittle().button().textContent, /\u2318O/);
+  }],
+  ["Linux: promote button says Ctrl+O", () => {
+    assert.match(setupLittle("real", { os: "Linux" }).button().textContent, /Ctrl\+O/);
+  }],
+  ["Linux: the strip hands the drag to the window manager (works on Wayland too)", () => {
+    const t = setupLittle("real", { os: "Linux", wm: true });
+    const strip = t.strip();
+    strip.fire("pointerdown", { screenX: 100, screenY: 30 });
+    strip.fire("pointermove", { screenX: 150, screenY: 80 });
+    assert.strictEqual(t.moves.length, 0, "no manual moveTo drag");
+    strip.fire("mousedown", { screenX: 100, screenY: 30 });
+    assert.strictEqual(t.wmMoves.length, 1, "beginWindowMove called from mousedown");
+    strip.fire("mousedown", { button: 2 });
+    assert.strictEqual(t.wmMoves.length, 1, "right-click doesn't drag");
+  }],
+  ["Linux without beginWindowMove: falls back to the manual drag", () => {
+    const t = setupLittle("real", { os: "Linux" });
+    const strip = t.strip();
+    strip.fire("pointerdown", { screenX: 100, screenY: 30 });
+    strip.fire("pointermove", { screenX: 150, screenY: 80 });
+    assert.deepStrictEqual(t.moves, [[50, 75]]);
   }],
   ["links clicked inside Zen are untouched", () => {
     const t = setup(space(2));

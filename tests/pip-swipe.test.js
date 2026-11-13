@@ -29,7 +29,8 @@ const SCREENS = [
   },
 }));
 
-function setup() {
+// opts.os / opts.protocol: what Services.appinfo.OS and nsIGfxInfo.windowProtocol report.
+function setup(opts = {}) {
   const screenManager = {
     primaryScreen: SCREENS[0],
     screenForRect(x, y) {
@@ -89,10 +90,17 @@ function setup() {
   };
 
   const logs = [];
+  const infos = [];
   const sandbox = {
     window: win,
-    Services: { prefs: { getBoolPref: (p, d) => (p === "pipswipe.debug" ? true : d), getIntPref: (p, d) => d } },
-    Cc: { "@mozilla.org/gfx/screenmanager;1": { getService: () => screenManager } },
+    Services: {
+      prefs: { getBoolPref: (p, d) => (p === "pipswipe.debug" ? true : d), getIntPref: (p, d) => d },
+      appinfo: opts.os ? { OS: opts.os } : undefined,
+    },
+    Cc: {
+      "@mozilla.org/gfx/screenmanager;1": { getService: () => screenManager },
+      "@mozilla.org/gfx/info;1": { getService: () => ({ windowProtocol: opts.protocol ?? "" }) },
+    },
     Ci: { nsIScreenManager: {} },
     ChromeUtils: { importESModule() { throw new Error("no ctypes outside Zen"); } },
     WheelEvent: { DOM_DELTA_PIXEL: 0 },
@@ -101,7 +109,7 @@ function setup() {
     cancelAnimationFrame: id => { rafs = rafs.filter(r => r.id !== id); },
     setTimeout: (fn, ms) => { const id = nextId++; timers.push({ id, at: now + ms, fn }); return id; },
     clearTimeout: id => { timers = timers.filter(t => t.id !== id); },
-    console: { info() {}, error() {}, log: (...a) => logs.push(a) },
+    console: { info: (...a) => infos.push(a.join(" ")), error() {}, log: (...a) => logs.push(a) },
     globalThis: {},
   };
   new Function(...Object.keys(sandbox), SRC)(...Object.values(sandbox));
@@ -127,7 +135,7 @@ function setup() {
     return r && r[2].target;
   };
 
-  return { win, wheel, fling, advance, offscreen, release, logs, place: (x, y) => { win.screenX = x; win.screenY = y; } };
+  return { win, wheel, fling, advance, offscreen, release, logs, infos, hasWheel: () => !!wheelHandler, place: (x, y) => { win.screenX = x; win.screenY = y; } };
 }
 
 const s1 = SCREENS[0].r;
@@ -205,6 +213,18 @@ const cases = [
     t.place(5000, 400);
     t.fling(-40, 0);
     assert.deepStrictEqual([t.win.screenX, t.win.screenY], [rightEdge(s3), 400]);
+  }],
+  ["Linux X11: swipes move the window (cursor follows via libX11 when present)", () => {
+    const t = setup({ os: "Linux", protocol: "x11" });
+    assert.ok(t.hasWheel(), "listens for swipes");
+    t.place(700, 400);
+    t.fling(22, 0);
+    assert.deepStrictEqual([t.win.screenX, t.win.screenY], [leftEdge(s1), 400]);
+  }],
+  ["Linux Wayland: stays off and says why", () => {
+    const t = setup({ os: "Linux", protocol: "wayland" });
+    assert.ok(!t.hasWheel(), "must not hijack scrolling when it can't move the window");
+    assert.ok(t.infos.some(m => m.includes("MOZ_ENABLE_WAYLAND=0")), "points at the XWayland workaround");
   }],
 ];
 

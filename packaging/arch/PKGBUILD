@@ -1,0 +1,43 @@
+# Arch package for cranez, built from the git clone this file is in (not downloaded from
+# GitHub), so `git pull` + rebuild is the update. The easy way: ./cranez.sh setup (builds and
+# installs this, then sets up your profile) and later `cranez update`. By hand:
+#   cd packaging/arch && makepkg -si && cranez install
+#
+# It puts cranez in /usr/share/cranez, `cranez` on PATH, and the fx-autoconfig loader into
+# Zen's install folder. pacman owns those two loader files, so Zen upgrades leave them alone.
+# Zen's folder is found by `cranez.sh app-dir` (zen-browser-bin: /opt/zen-browser-bin);
+# set ZEN_APP=/path/to/zen when building for a Zen somewhere else.
+# shellcheck shell=bash disable=SC2034,SC2154  # makepkg reads these / sets pkgdir, startdir
+
+_repo=$(cd "$startdir/../.." && pwd -P)
+
+pkgname=cranez-git
+pkgver=r$(git -C "$_repo" rev-list --count HEAD 2>/dev/null || echo 0).$(git -C "$_repo" rev-parse --short HEAD 2>/dev/null || echo 0)
+pkgrel=1
+pkgdesc='Arc browser features for Zen, as fx-autoconfig user scripts'
+arch=(any)
+url='https://github.com/ivanmorales/cranez'
+license=('LicenseRef-unknown')
+depends=(bash git)
+optdepends=('libnotify: desktop notifications'
+            'zen-browser-bin: the browser cranez extends')
+provides=(cranez)
+conflicts=(cranez)
+
+package() {
+  local zen share="$pkgdir/usr/share/cranez"
+  zen=$(bash "$_repo/cranez.sh" app-dir) || return 1
+
+  install -d "$share/scripts"
+  install -m755 "$_repo/cranez.sh" "$share/cranez.sh"
+  install -m644 "$_repo/zen-prefs.js" "$share/zen-prefs.js"
+  install -m644 "$_repo"/scripts/*.uc.js "$share/scripts/"
+  cp -R "$_repo/vendor" "$share/vendor"
+  printf '%s\n' "$_repo" >"$share/.source" # lets `cranez update` find the clone
+
+  install -Dm755 "$_repo/packaging/arch/cranez" "$pkgdir/usr/bin/cranez"
+
+  install -Dm644 "$_repo/vendor/fx-autoconfig/program/config.js" "$pkgdir$zen/config.js"
+  install -Dm644 "$_repo/vendor/fx-autoconfig/program/defaults/pref/config-prefs.js" \
+    "$pkgdir$zen/defaults/pref/config-prefs.js"
+}

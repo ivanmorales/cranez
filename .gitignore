@@ -2,3 +2,8 @@
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# makepkg leftovers from building packaging/arch by hand
+/packaging/arch/src/
+/packaging/arch/pkg/
+/packaging/arch/*.pkg.tar*

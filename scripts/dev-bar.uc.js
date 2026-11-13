@@ -15,7 +15,8 @@
  *   - Inspect: opens the Inspector with the element picker active
  * The bar follows you across tabs, workspaces and navigations. On/off state is shared by
  * all windows and survives restarts.
- * Copy URL keybind: Zen already has Cmd+Shift+C built in, so the script doesn't add one.
+ * Copy URL keybind: Zen already has Cmd+Shift+C (Linux: Ctrl+Shift+C) built in, so the script
+ * doesn't add one. On Linux, Ctrl+D is also Firefox's "Bookmark this page"; the bar wins.
  *
  * Optional prefs (about:config):
  *   devbar.visible   bool    the on/off state (Ctrl+D flips it)
@@ -26,7 +27,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "v2";
+  const VERSION = "v3-linux";
   const XHTML = "http://www.w3.org/1999/xhtml";
   const SVG = "http://www.w3.org/2000/svg";
 
@@ -253,7 +254,7 @@
     bar.append(
       lockEl,
       urlEl,
-      button("link", "Copy URL (\u2318\u21e7C)", copyURL),
+      button("link", Services.appinfo?.OS === "Linux" ? "Copy URL (Ctrl+Shift+C)" : "Copy URL (\u2318\u21e7C)", copyURL),
       sep(),
       button("console", "Console", () => toggleTool("webconsole")),
       button("network", "Network", () => toggleTool("netmonitor")),

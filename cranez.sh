@@ -1,26 +1,70 @@
 #!/bin/bash
-# cranez: Arc features for Zen. Installs the loader, scripts and prefs on any Mac.
+# cranez: Arc features for Zen. Installs the loader, scripts and prefs on a Mac or Arch Linux.
 #
 #   ./cranez.sh setup       everything: Zen, its profile, loader, scripts, prefs, watcher
 #   ./cranez.sh install     loader + scripts + prefs (quit Zen first)
 #   ./cranez.sh loader      re-enable scripts after a Zen update
 #   ./cranez.sh status      show what's installed
 #   ./cranez.sh capture     save the prefs you tuned in about:config into the kit
-#   ./cranez.sh watch-on    notify (and try to auto-fix) after Zen updates
+#   ./cranez.sh watch-on    notify (and try to auto-fix) after Zen updates (macOS)
 #   ./cranez.sh watch-off
+#   ./cranez.sh update      Linux: git pull the clone cranez came from, then setup
 #   ./cranez.sh uninstall   remove everything this kit added
 #
-# Overrides: ZEN_APP=/path/to/Zen.app   ZEN_PROFILE=/path/to/profile
+# Overrides: ZEN_APP=/path/to/Zen.app (Linux: Zen's install folder)   ZEN_PROFILE=/path/to/profile
 set -euo pipefail
 
 KIT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ME="${CRANEZ_CLI_NAME:-$0}"  # what to tell the owner to run (bin/cranez sets "cranez")
-APP="${ZEN_APP:-/Applications/Zen.app}"
-RES="$APP/Contents/Resources"
-ZEN_DATA="${ZEN_DATA:-$HOME/Library/Application Support/zen}"
+OS="${CRANEZ_OS:-$(uname -s)}" # Darwin or Linux (tests set CRANEZ_OS to fake Linux on a Mac)
 LOADER="$KIT/vendor/fx-autoconfig"
 PREFS_FILE="$KIT/zen-prefs.js"
-STATE_DIR="$HOME/Library/Application Support/cranez"
+PKG_NAME="cranez-git"          # the Arch package packaging/arch/PKGBUILD builds
+
+# Where Arch's Zen packages put the browser (zen-browser-bin first). Colon-separated.
+ZEN_DIRS="${CRANEZ_ZEN_DIRS:-/opt/zen-browser-bin:/opt/zen-browser:/opt/zen-twilight-bin:/opt/zen:/usr/lib/zen-browser}"
+linux_app_dir() {
+  local d rest="$ZEN_DIRS:"
+  while [[ -n "$rest" ]]; do
+    d="${rest%%:*}"
+    rest="${rest#*:}"
+    if [[ -n "$d" && -f "$d/application.ini" ]]; then
+      printf '%s\n' "$d"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Linux Zen keeps profiles in ~/.zen; newer builds may follow XDG (~/.config/zen).
+linux_zen_data() {
+  local d
+  for d in "$HOME/.zen" "${XDG_CONFIG_HOME:-$HOME/.config}/zen"; do
+    if [[ -f "$d/profiles.ini" ]]; then
+      printf '%s\n' "$d"
+      return 0
+    fi
+  done
+  printf '%s\n' "$HOME/.zen"
+}
+
+if [[ "$OS" == Linux ]]; then
+  APP="${ZEN_APP:-$(linux_app_dir || echo "${ZEN_DIRS%%:*}")}"
+  RES="$APP"
+  APP_LABEL="Zen ($APP)"
+  ZEN_DATA="${ZEN_DATA:-$(linux_zen_data)}"
+  STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/cranez"
+  CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}"
+  ACCEL="Ctrl"
+else
+  APP="${ZEN_APP:-/Applications/Zen.app}"
+  RES="$APP/Contents/Resources"
+  APP_LABEL="Zen.app"
+  ZEN_DATA="${ZEN_DATA:-$HOME/Library/Application Support/zen}"
+  STATE_DIR="$HOME/Library/Application Support/cranez"
+  CACHE_ROOT="$HOME/Library/Caches"
+  ACCEL="Cmd"
+fi
 AGENT_LABEL="com.cranez.update-watch"
 OLD_AGENT_LABEL="com.zen-kit.update-watch"  # pre-rename name, cleaned up on watch-on/off
 AGENT_PLIST="$HOME/Library/LaunchAgents/$AGENT_LABEL.plist"
@@ -35,17 +79,33 @@ ok()     { printf '%s✓%s %s\n' "$G" "$N" "$*"; }
 warn()   { printf '%s!%s %s\n' "$Y" "$N" "$*"; }
 bad()    { printf '%s✗%s %s\n' "$R" "$N" "$*"; }
 die()    { bad "$*"; exit 1; }
-notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"cranez\"" >/dev/null 2>&1 || true; }
-
-zen_version() {
-  /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist" 2>/dev/null || echo "?"
+notify() {
+  if [[ "$OS" == Linux ]]; then
+    notify-send cranez "$1" >/dev/null 2>&1 || true
+  else
+    /usr/bin/osascript -e "display notification \"$1\" with title \"cranez\"" >/dev/null 2>&1 || true
+  fi
 }
 
-zen_running() { /usr/bin/pgrep -f "$APP/Contents/MacOS/" >/dev/null 2>&1; }
+zen_version() {
+  if [[ "$OS" == Linux ]]; then
+    awk -F= '/^Version=/ { print $2; found = 1; exit } END { if (!found) print "?" }' "$APP/application.ini" 2>/dev/null || echo "?"
+  else
+    /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist" 2>/dev/null || echo "?"
+  fi
+}
+
+zen_running() {
+  if [[ "$OS" == Linux ]]; then
+    pgrep -f "$APP/" >/dev/null 2>&1
+  else
+    /usr/bin/pgrep -f "$APP/Contents/MacOS/" >/dev/null 2>&1
+  fi
+}
 
 require_quit() {
   if zen_running; then
-    die "Zen is running. Quit it (Cmd+Q) and run this again."
+    die "Zen is running. Quit it ($ACCEL+Q) and run this again."
   fi
 }
 
@@ -80,7 +140,8 @@ find_profile() {
 }
 
 # --------------------------------------------------------------------------
-# App side: the two loader files inside Zen.app (wiped by every Zen update)
+# App side: the two loader files inside Zen.app (wiped by every Zen update). On Arch they
+# go into Zen's install folder, owned by the cranez-git package, so Zen updates keep them.
 # --------------------------------------------------------------------------
 loader_current() {
   cmp -s "$LOADER/program/config.js" "$RES/config.js" &&
@@ -107,9 +168,14 @@ copy_loader() {
 }
 
 install_loader() {
-  [[ -d "$RES" ]] || die "Zen not found at $APP (set ZEN_APP=/path/to/Zen.app)."
+  if [[ ! -d "$RES" ]]; then
+    if [[ "$OS" == Linux ]]; then
+      die "Zen not found (looked in ${ZEN_DIRS//:/, }). Install it (yay -S zen-browser-bin) or set ZEN_APP=/path/to/zen."
+    fi
+    die "Zen not found at $APP (set ZEN_APP=/path/to/Zen.app)."
+  fi
   if loader_current; then
-    ok "Loader already in Zen.app"
+    ok "Loader already in $APP_LABEL"
     return 0
   fi
   local rc=0
@@ -120,7 +186,7 @@ install_loader() {
     copy_loader sudo || rc=$?
   fi
   case $rc in
-    0) ok "Loader installed into Zen.app" ;;
+    0) ok "Loader installed into $APP_LABEL" ;;
     2)
       bad "macOS blocked writing into Zen.app."
       echo "   System Settings → Privacy & Security → App Management → turn on your terminal app,"
@@ -313,17 +379,28 @@ clear_startup_cache() {
   while IFS= read -r d; do
     rm -rf "$d"
     found=1
-  done < <(find "$HOME/Library/Caches" -maxdepth 5 -type d -name startupCache -path "*/$name/*" 2>/dev/null)
+  done < <(find "$CACHE_ROOT" -maxdepth 5 -type d -name startupCache -path "*/$name/*" 2>/dev/null)
   if [[ $found -eq 1 ]]; then ok "Startup cache cleared"; else ok "No startup cache to clear"; fi
 }
 
 # --------------------------------------------------------------------------
-# Setup: get a Mac from "only Homebrew" to a Zen that's ready for install
+# Setup: get a Mac from "only Homebrew" (or an Arch box) to a Zen that's ready for install
 # --------------------------------------------------------------------------
 has_profile() { (find_profile) >/dev/null 2>&1; }
 
 ensure_zen() {
   if [[ -d "$APP" ]]; then return 0; fi
+  if [[ "$OS" == Linux ]]; then
+    command -v yay >/dev/null 2>&1 ||
+      die "Zen not found (looked in ${ZEN_DIRS//:/, }). Install zen-browser-bin from the AUR, or set ZEN_APP=/path/to/zen, then run $ME setup again."
+    echo "Installing Zen with yay…"
+    yay -S --needed zen-browser-bin
+    APP="$(linux_app_dir)" || die "yay installed Zen, but it isn't in ${ZEN_DIRS//:/, } (set ZEN_APP=/path/to/zen)."
+    RES="$APP"
+    APP_LABEL="Zen ($APP)"
+    ok "Zen installed"
+    return 0
+  fi
   if ! command -v brew >/dev/null 2>&1; then
     die "Zen isn't installed and Homebrew isn't on PATH. Install Homebrew (https://brew.sh) or Zen, then run $ME setup again."
   fi
@@ -344,9 +421,22 @@ ensure_zen() {
 # the loader adds files to the bundle, or Zen can be reported as damaged.
 ensure_profile() {
   if has_profile && [[ -z "${ZEN_FRESH:-}" ]]; then return 0; fi
-  local t="${CRANEZ_PROFILE_TIMEOUT:-300}" i=0
-  open "$APP" || die "Couldn't open $APP."
-  echo "Opening Zen once. If macOS asks, click Open."
+  local t="${CRANEZ_PROFILE_TIMEOUT:-300}" i=0 bin b
+  if [[ "$OS" == Linux ]]; then
+    if [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+      die "No Zen profile yet and no desktop session to open Zen in. Open Zen once, quit it, then run $ME setup again."
+    fi
+    bin=""
+    for b in "$APP/zen" "$APP/zen-bin"; do
+      if [[ -x "$b" ]]; then bin="$b"; break; fi
+    done
+    [[ -n "$bin" ]] || die "No zen executable in $APP. Open Zen once, quit it, then run $ME setup again."
+    "$bin" >/dev/null 2>&1 &
+    echo "Opening Zen once to create its profile…"
+  else
+    open "$APP" || die "Couldn't open $APP."
+    echo "Opening Zen once. If macOS asks, click Open."
+  fi
   until has_profile && zen_running; do
     if [[ $i -ge $t ]]; then
       if has_profile; then
@@ -362,10 +452,16 @@ ensure_profile() {
 }
 
 # Quitting via AppleScript may make macOS ask once whether the terminal may control Zen.
+# On Linux, Gecko treats SIGTERM as a normal quit.
 ask_zen_to_quit() {
   local i=0
-  echo "Asking Zen to quit (allow it if macOS asks)…"
-  osascript -e 'tell application id "app.zen-browser.zen" to quit' >/dev/null 2>&1 || true
+  if [[ "$OS" == Linux ]]; then
+    echo "Asking Zen to quit…"
+    pkill -TERM -f "$APP/" >/dev/null 2>&1 || true
+  else
+    echo "Asking Zen to quit (allow it if macOS asks)…"
+    osascript -e 'tell application id "app.zen-browser.zen" to quit' >/dev/null 2>&1 || true
+  fi
   while zen_running && [[ $i -lt ${CRANEZ_QUIT_GRACE:-15} ]]; do
     sleep 1
     i=$((i + 1))
@@ -374,8 +470,61 @@ ask_zen_to_quit() {
 
 wait_for_quit() {
   zen_running || return 0
-  echo "Quit Zen (⌘Q) to continue…"
+  if [[ "$OS" == Linux ]]; then echo "Quit Zen (Ctrl+Q) to continue…"; else echo "Quit Zen (⌘Q) to continue…"; fi
   while zen_running; do sleep 1; done
+}
+
+# Arch: build packaging/arch/PKGBUILD from this git clone and install it. pacman then owns the
+# loader in Zen's folder (Zen upgrades leave it alone, uninstalling cranez removes it) and puts
+# `cranez` on PATH. Skipped when this exact commit is already installed. Without makepkg, or if
+# the build fails, install_loader copies the loader in instead.
+install_package() {
+  [[ -d "$KIT/.git" && -f "$KIT/packaging/arch/PKGBUILD" ]] || return 0
+  if ! command -v makepkg >/dev/null 2>&1 || ! command -v pacman >/dev/null 2>&1; then
+    warn "makepkg not found (pacman -S base-devel); the loader is copied in instead of packaged"
+    return 0
+  fi
+  local want have tmp pkg
+  want="r$(git -C "$KIT" rev-list --count HEAD).$(git -C "$KIT" rev-parse --short HEAD)"
+  have=$(pacman -Q "$PKG_NAME" 2>/dev/null | awk '{ print $2 }' || true)
+  if [[ "${have%-*}" == "$want" ]] && loader_current &&
+    [[ -z "$(git -C "$KIT" status --porcelain -- cranez.sh scripts vendor zen-prefs.js packaging)" ]]; then
+    ok "$PKG_NAME $have installed"
+    return 0
+  fi
+  tmp=$(mktemp -d)
+  echo "Building the $PKG_NAME package from ${KIT}…"
+  if ! (cd "$KIT/packaging/arch" &&
+    BUILDDIR="$tmp/build" PKGDEST="$tmp" SRCDEST="$tmp/src" ZEN_APP="$APP" \
+      makepkg -f --noconfirm >"$tmp/makepkg.log" 2>&1); then
+    tail -n 20 "$tmp/makepkg.log" >&2
+    warn "Building $PKG_NAME failed (above); the loader is copied in instead"
+    rm -rf "$tmp"
+    return 0
+  fi
+  pkg=$(find "$tmp" -maxdepth 1 -name "$PKG_NAME-*.pkg.tar*" | head -n 1)
+  echo "Installing it with pacman (it asks for your password)…"
+  # --overwrite: a loader copied in earlier by `loader` isn't owned by any package yet.
+  if sudo pacman -U --noconfirm --overwrite "$RES/config.js" \
+    --overwrite "$RES/defaults/pref/config-prefs.js" "$pkg"; then
+    ok "$PKG_NAME installed: \`cranez\` is on PATH and pacman owns the loader"
+  else
+    warn "pacman didn't install $PKG_NAME; the loader is copied in instead"
+  fi
+  rm -rf "$tmp"
+}
+
+# Linux: the git clone this copy of cranez came from (the package records it in .source).
+source_clone() {
+  local s
+  if [[ -d "$KIT/.git" ]]; then
+    printf '%s\n' "$KIT"
+    return 0
+  fi
+  [[ -f "$KIT/.source" ]] || return 1
+  s=$(cat "$KIT/.source")
+  [[ -d "$s/.git" ]] || return 1
+  printf '%s\n' "$s"
 }
 
 # --------------------------------------------------------------------------
@@ -383,6 +532,7 @@ wait_for_quit() {
 # --------------------------------------------------------------------------
 cmd_setup() {
   ensure_zen
+  if [[ "$OS" == Linux ]]; then install_package; fi
   ensure_profile
   wait_for_quit
   SETUP=1 cmd_install
@@ -392,7 +542,7 @@ cmd_setup() {
   cmd_status
   echo "cranez checkout: $(git -C "$KIT" rev-parse --short HEAD 2>/dev/null || echo '?')"
   if [[ ! -f "$PROFILE/signedInUser.json" ]]; then
-    warn "Sign in to your Mozilla account in Zen so cranez prefs sync between your Macs."
+    warn "Sign in to your Mozilla account in Zen so cranez prefs sync between your computers."
   fi
 }
 
@@ -405,7 +555,7 @@ cmd_install() {
   clear_startup_cache
   install_loader
   echo
-  ok "Done. Open Zen; the Browser Console (Cmd+Shift+J) shows a 'loaded' line for each script."
+  ok "Done. Open Zen; the Browser Console ($ACCEL+Shift+J) shows a 'loaded' line for each script."
 }
 
 cmd_loader() {
@@ -419,7 +569,7 @@ cmd_status() {
   find_profile
   echo "Zen:     $APP ($(zen_version))"
   echo "Profile: $PROFILE"
-  if loader_current; then ok "Loader in Zen.app"; else bad "Loader missing from Zen.app → $ME loader"; fi
+  if loader_current; then ok "Loader in $APP_LABEL"; else bad "Loader missing from $APP_LABEL → $ME loader"; fi
   if [[ -f "$PROFILE/chrome/utils/boot.sys.mjs" ]]; then ok "Loader in profile"; else bad "Loader missing from profile → $ME install"; fi
   local f n name
   for f in "$KIT"/scripts/*.uc.js; do
@@ -433,7 +583,13 @@ cmd_status() {
       bad "$name not installed ($n) → $ME install"
     fi
   done
-  if launchctl print "gui/$(id -u)/$AGENT_LABEL" >/dev/null 2>&1; then
+  if [[ "$OS" == Linux ]]; then
+    if pacman -Q "$PKG_NAME" >/dev/null 2>&1; then
+      ok "Package $(pacman -Q "$PKG_NAME") (update: $ME update)"
+    else
+      warn "Not packaged: run $ME setup from a git clone of cranez to install $PKG_NAME"
+    fi
+  elif launchctl print "gui/$(id -u)/$AGENT_LABEL" >/dev/null 2>&1; then
     ok "Update watcher on"
   else
     warn "Update watcher off (optional: $ME watch-on)"
@@ -469,6 +625,7 @@ cmd_capture() {
 
 cmd_after_update() {
   # Run by the LaunchAgent when Zen.app changes. Never prompts.
+  [[ "$OS" == Linux ]] && exit 0
   [[ -d "$RES" ]] || exit 0
   loader_current && exit 0
   local ver stamp
@@ -486,6 +643,10 @@ cmd_after_update() {
 
 cmd_watch_on() {
   local old
+  if [[ "$OS" == Linux ]]; then
+    ok "No update watcher needed on Linux: Zen updates through pacman leave the loader in place."
+    return 0
+  fi
   old=$(grep -o '<string>[^<]*/cranez\.sh</string>' "$AGENT_PLIST" 2>/dev/null | sed 's/<[^>]*>//g' || true)
   if [[ -n "$old" && "$old" != "$KIT/cranez.sh" ]]; then
     warn "Watcher moved from $(dirname "$old") to $KIT; the old folder isn't used by the watcher any more."
@@ -529,6 +690,7 @@ remove_old_agent() {
 }
 
 cmd_watch_off() {
+  if [[ "$OS" == Linux ]]; then return 0; fi
   remove_old_agent
   launchctl bootout "gui/$(id -u)/$AGENT_LABEL" >/dev/null 2>&1 || true
   rm -f "$AGENT_PLIST"
@@ -549,6 +711,10 @@ cmd_uninstall() {
   done
   rm -rf "$PROFILE/chrome/utils"
   ok "Scripts and loader removed from profile"
+  if [[ "$OS" == Linux ]]; then
+    uninstall_linux_loader
+    return 0
+  fi
   if [[ -f "$RES/config.js" || -f "$RES/defaults/pref/config-prefs.js" ]]; then
     if rm -f "$RES/config.js" "$RES/defaults/pref/config-prefs.js" 2>/dev/null; then
       ok "Loader removed from Zen.app"
@@ -560,8 +726,42 @@ cmd_uninstall() {
   echo "Prefs were left as they are (harmless without the scripts)."
 }
 
+# Linux: the loader is either owned by the cranez-git package (removing the package removes
+# it, and this script with it, so that's the last thing done) or was copied in by `loader`.
+uninstall_linux_loader() {
+  local files=("$RES/config.js" "$RES/defaults/pref/config-prefs.js")
+  echo "Prefs were left as they are (harmless without the scripts)."
+  if command -v pacman >/dev/null 2>&1 && pacman -Q "$PKG_NAME" >/dev/null 2>&1; then
+    echo "Removing the $PKG_NAME package (loader and cranez command)…"
+    exec sudo pacman -R --noconfirm "$PKG_NAME"
+  fi
+  [[ -f "${files[0]}" || -f "${files[1]}" ]] || return 0
+  if rm -f "${files[@]}" 2>/dev/null || { [[ -t 0 ]] && sudo rm -f "${files[@]}"; }; then
+    ok "Loader removed from $APP_LABEL"
+  else
+    warn "Couldn't remove the loader from $APP_LABEL. It's inert without the profile files; remove ${files[*]} as root."
+  fi
+}
+
+cmd_update() {
+  local src
+  if [[ "$OS" != Linux ]]; then
+    die "On a Mac, run: cranez setup (it fetches the latest cranez)."
+  fi
+  src=$(source_clone) || die "Can't find the git clone cranez was built from. Clone it again and run ./cranez.sh setup there."
+  echo "Pulling ${src}…"
+  git -C "$src" pull --ff-only || die "git pull failed in $src; sort it out there, then run $ME update again."
+  exec /bin/bash "$src/cranez.sh" setup
+}
+
+# Used by packaging/arch/PKGBUILD: where Zen is installed.
+cmd_app_dir() {
+  [[ -f "$APP/application.ini" ]] || die "Zen not found (looked in ${ZEN_DIRS//:/, }). Set ZEN_APP=/path/to/zen."
+  printf '%s\n' "$APP"
+}
+
 usage() {
-  sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 case "${1:-help}" in
@@ -573,6 +773,8 @@ case "${1:-help}" in
   watch-on) cmd_watch_on ;;
   watch-off) cmd_watch_off ;;
   after-update) cmd_after_update ;;
+  update) cmd_update ;;
+  app-dir) cmd_app_dir ;;
   uninstall) cmd_uninstall ;;
   *) usage ;;
 esac

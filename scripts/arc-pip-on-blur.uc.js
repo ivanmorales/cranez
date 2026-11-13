@@ -13,6 +13,8 @@
  * - macOS tells Gecko when the window is fully hidden (another Space on that screen,
  *   covered by other windows, minimized): "occlusionstatechange" / "sizemodechange",
  *   read via window.isFullyOccluded and window.windowState.
+ *   Linux: same events, but what fires depends on GTK and the compositor (minimizing does
+ *   on X11; other workspaces / covering windows may not). Check with arcpip.debug.
  * - After a short delay, if the window is still hidden, asks Firefox's own
  *   PictureInPictureLauncher actor to "AutoToggle", the same message the native
  *   tab-switch auto-PiP sends. The content side only opens PiP if it finds a playing,

@@ -1,0 +1,7 @@
+#!/bin/bash
+# `cranez` on Arch, installed by packaging/arch/PKGBUILD: runs the packaged cranez.sh.
+#   cranez update      git pull the clone cranez was built from, rebuild, set up again
+#   cranez install     put the scripts into your Zen profile (quit Zen first)
+#   cranez status      show what's installed
+#   cranez uninstall   remove everything cranez added, package included
+CRANEZ_CLI_NAME=cranez exec /bin/bash /usr/share/cranez/cranez.sh "$@"

@@ -1,7 +1,8 @@
 # cranez: notes for Claude Code
 
-Arc browser features rebuilt for Zen (Firefox-based) on macOS, as fx-autoconfig user scripts.
-Owner uses it daily on multiple Macs with 3 monitors and a Magic Mouse; Zen's top toolbar is off.
+Arc browser features rebuilt for Zen (Firefox-based) on macOS and Arch Linux, as fx-autoconfig
+user scripts. Owner uses it daily on multiple Macs with 3 monitors and a Magic Mouse; Zen's top
+toolbar is off. Also on a PearOS (Arch) box with zen-browser-bin.
 
 ## How it runs
 
@@ -15,6 +16,12 @@ Owner uses it daily on multiple Macs with 3 monitors and a Magic Mouse; Zen's to
   and forwards every command to that checkout's `cranez.sh` (with `CRANEZ_CLI_NAME=cranez`, so
   messages say `cranez <cmd>`). `CRANEZ_HOME=<clone>` uses a dev clone as-is. Keep `bin/cranez`
   thin: logic belongs in `cranez.sh`, which ships with `setup`, not with a brew release.
+- Arch Linux: `cranez.sh setup` run from a git clone builds `packaging/arch/PKGBUILD` (source =
+  that clone's working tree, not GitHub; build dirs in a temp folder so the repo stays clean)
+  and installs `cranez-git` with pacman. The package owns the loader in Zen's folder
+  (`/opt/zen-browser-bin`, found by `cranez.sh app-dir`), so Zen upgrades keep it: no watcher.
+  `/usr/bin/cranez` runs `/usr/share/cranez/cranez.sh`; `cranez update` pulls the clone recorded
+  in `/usr/share/cranez/.source` and re-runs setup. `CRANEZ_OS=Linux` fakes Linux in tests.
 - Prefs: `zen-prefs.js` is defaults only (`install` never overwrites an existing pref); tuned
   values travel via Firefox Sync, which `install` turns on for every pref documented in the
   script headers (minus `*.debug`, `devbar.visible`, `tabexpiry.run_now`).
@@ -32,7 +39,9 @@ Owner uses it daily on multiple Macs with 3 monitors and a Magic Mouse; Zen's to
 - Fail safe: a script must never break the browser window. Guard Firefox/Zen internals with
   try/catch and log with the `[name]` prefix.
 - `cranez.sh` runs on macOS's `/bin/bash` 3.2 and BSD tools: no associative arrays, `mapfile`,
-  `${x,,}`, `sed -i`, `readlink -f`; POSIX awk only. Keep it shellcheck-clean.
+  `${x,,}`, `sed -i`, `readlink -f`; POSIX awk only. Keep it shellcheck-clean. Write `${VAR}…`,
+  not `$VAR…`: bash 3.2 reads the ellipsis bytes as part of the variable name. Platform splits
+  go through `$OS` (Darwin/Linux).
 - Don't edit `vendor/` except to deliberately update fx-autoconfig (then update `COMMIT`).
 - Default to small, focused changes; the owner tests each change live in Zen.
 
@@ -42,14 +51,17 @@ Owner uses it daily on multiple Macs with 3 monitors and a Magic Mouse; Zen's to
 `arc-pip-on-blur` popping out only when the window is out of sight, `pip-swipe` gestures on a
 fake 3-monitor desktop (fling caps, monitor hops, corner snap, never off screen), `tab-expiry`
 keep/close rules, `little-arc` (external links in the current space's container, chromeless
-little window, drag strip), the installer end to end on a fake Mac layout, and `cranez.sh
+little window, drag strip, Linux variants), the installer end to end on a fake Mac layout,
+`tests/linux.test.sh` on a fake Arch box (setup builds/installs the package via stubbed
+`makepkg`/`pacman`/`sudo` that run the real `package()`, update, uninstall), and `cranez.sh
 setup` + `bin/cranez` on a shared fake Mac (`tests/fake-mac.sh`: stubbed `brew`, `open`,
 `osascript`, `launchctl`, an App-Management-blocking `cp`, a local bare repo as GitHub).
 Add a test case whenever you change behaviour those suites cover.
 
 Not covered (verify manually in Zen): anything touching real Firefox internals, macOS cursor
 calls (js-ctypes), App Management/launchd, real DevTools, Zen's first-run profile creation and
-the Gatekeeper prompt, Firefox Sync carrying cranez prefs, a real `brew install` from the tap.
+the Gatekeeper prompt, Firefox Sync carrying cranez prefs, a real `brew install` from the tap,
+and on Linux: a real makepkg/pacman, libX11 cursor calls, `beginWindowMove`, Wayland vs X11.
 
 ## Firefox/Zen internals each script depends on (first suspects after a Zen update)
 
@@ -60,7 +72,9 @@ the Gatekeeper prompt, Firefox Sync carrying cranez prefs, a real `brew install`
   `window.isFullyOccluded` + `occlusionstatechange` and `windowState` + `sizemodechange`
   (falls back to `deactivate`/`activate` if `isFullyOccluded` is missing).
 - **pip-swipe**: runs in `chrome://global/content/pictureinpicture/player.xhtml`;
-  `nsIScreenManager`; js-ctypes → `NSEvent.mouseLocation`, `CGWarpMouseCursorPosition`.
+  `nsIScreenManager`; js-ctypes → `NSEvent.mouseLocation`, `CGWarpMouseCursorPosition`; Linux:
+  `libX11.so.6` `XQueryPointer`/`XWarpPointer` (root window, device px ÷ `desktopToDeviceScale`),
+  `Services.appinfo.OS`, `nsIGfxInfo.windowProtocol` (off on "wayland": `moveTo` can't work).
   Firefox doesn't expose macOS momentum phase, so momentum is detected heuristically (steadily
   decaying deltas) and then swallowed.
 - **little-arc**: `window.browserDOMWindow` (its `openURI` is read-only in current Gecko, so the
@@ -69,7 +83,8 @@ the Gatekeeper prompt, Firefox Sync carrying cranez prefs, a real `brew install`
   `[8]` (triggeringPrincipal) as `browser-init.js` reads them for the little window's container,
   `CustomTitlebar.allowedBy("non-popup", …)` (from `tab-bar-visibility.js`; little windows ignore
   that veto to drop the macOS title bar), Zen's `#zen-appcontent-navbar-wrapper` (URL bar row),
-  `BrowserWindowTracker.getTopWindow`, `gBrowser.adoptTab`, js-ctypes cursor position. Little
+  `BrowserWindowTracker.getTopWindow`, `gBrowser.adoptTab`, js-ctypes cursor position (Linux:
+  libX11; none on Wayland), Linux drag strip → `window.beginWindowMove(mousedown)`. Little
   windows are popup-style (`toolbar.visible == false`); placement is encoded in `window.name`.
 - **tab-expiry**: `tab.lastAccessed`, Places DB (`moz_bookmarks` ⋈ `moz_places`),
   `SessionStore.getTabState` (unloaded tabs report about:blank), `browser.asyncPermitUnload`,

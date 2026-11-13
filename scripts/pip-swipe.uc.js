@@ -26,6 +26,9 @@
  * - The window never leaves the visible screen area (menu bar and Dock excluded), not even
  *   mid-swipe or mid-momentum. At an outer edge it stops and slides along the edge; where
  *   two monitors touch it can cross over.
+ * - Linux: works under X11 (or XWayland: run Zen with MOZ_ENABLE_WAYLAND=0); the cursor is
+ *   read and moved through libX11. Native Wayland doesn't let a window move itself, so there
+ *   the script logs why and stays off.
  *
  * Optional prefs (about:config):
  *   pipswipe.enabled           bool  default true
@@ -45,12 +48,28 @@
 (() => {
   "use strict";
 
-  const VERSION = "v3";
+  const VERSION = "v4-linux";
   const bool = (p, d) => Services.prefs.getBoolPref(p, d);
   const int = (p, d) => Services.prefs.getIntPref(p, d);
   const log = (...a) => bool("pipswipe.debug", false) && console.log("[pip-swipe]", ...a);
 
   console.info(`[pip-swipe] ${VERSION} loaded in PiP player`);
+
+  const OS = Services.appinfo?.OS ?? "Darwin";
+
+  // "wayland", "x11", ... on Linux; "" if Gecko doesn't say.
+  function windowProtocol() {
+    try {
+      return String(Cc["@mozilla.org/gfx/info;1"].getService(Ci.nsIGfxInfo).windowProtocol || "");
+    } catch (e) {
+      return "";
+    }
+  }
+
+  if (OS === "Linux" && windowProtocol().startsWith("wayland")) {
+    console.info("[pip-swipe] off: Wayland doesn't let windows move themselves. Run Zen with MOZ_ENABLE_WAYLAND=0 (XWayland) to use it.");
+    return;
+  }
 
   // ---------------------------------------------------------------------------
   // Geometry. Everything is in Gecko desktop pixels (macOS points):
@@ -178,49 +197,91 @@
   }
 
   // ---------------------------------------------------------------------------
-  // macOS cursor: read with NSEvent.mouseLocation, move with CGWarpMouseCursorPosition
+  // Cursor control, in desktop pixels.
+  //   macOS: read with NSEvent.mouseLocation, move with CGWarpMouseCursorPosition
+  //   Linux (X11/XWayland): XQueryPointer / XWarpPointer on the root window (device pixels)
   // ---------------------------------------------------------------------------
 
-  let mac = null;
+  let cursorApi = null;
 
-  function macCursor() {
-    if (mac !== null) {
-      return mac;
+  function cursorControl() {
+    if (cursorApi !== null) {
+      return cursorApi;
     }
     try {
       const ctypes =
         globalThis.ctypes ?? ChromeUtils.importESModule("resource://gre/modules/ctypes.sys.mjs").ctypes;
-      const Point = new ctypes.StructType("Point", [{ x: ctypes.double }, { y: ctypes.double }]);
-
-      const objc = ctypes.open("/usr/lib/libobjc.A.dylib");
-      const id = ctypes.voidptr_t;
-      const getClass = objc.declare("objc_getClass", ctypes.default_abi, id, ctypes.char.ptr);
-      const getSel = objc.declare("sel_registerName", ctypes.default_abi, id, ctypes.char.ptr);
-      const msgSendPoint = objc.declare("objc_msgSend", ctypes.default_abi, Point, id, id);
-      const NSEvent = getClass("NSEvent");
-      const mouseLocation = getSel("mouseLocation");
-
-      const cg = ctypes.open("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics");
-      const warp = cg.declare("CGWarpMouseCursorPosition", ctypes.default_abi, ctypes.int32_t, Point);
-
-      mac = {
-        getCursor() {
-          const p = msgSendPoint(NSEvent, mouseLocation);
-          const primary = rectOf(screenManager.primaryScreen, "GetRectDisplayPix");
-          return { x: p.x, y: primary.h - p.y };
-        },
-        warpCursor(x, y) {
-          const pt = new Point();
-          pt.x = x;
-          pt.y = y;
-          warp(pt);
-        },
-      };
+      cursorApi = OS === "Linux" ? x11Cursor(ctypes) : macCursor(ctypes);
     } catch (e) {
       console.error("[pip-swipe] cursor control unavailable; window will move without the cursor", e);
-      mac = false;
+      cursorApi = false;
     }
-    return mac;
+    return cursorApi;
+  }
+
+  function x11Cursor(ctypes) {
+    const x11 = ctypes.open("libX11.so.6");
+    const Display = ctypes.voidptr_t;
+    const XWindow = ctypes.unsigned_long;
+    const open = x11.declare("XOpenDisplay", ctypes.default_abi, Display, ctypes.char.ptr);
+    const rootOf = x11.declare("XDefaultRootWindow", ctypes.default_abi, XWindow, Display);
+    const query = x11.declare(
+      "XQueryPointer", ctypes.default_abi, ctypes.int, Display, XWindow,
+      XWindow.ptr, XWindow.ptr, ctypes.int.ptr, ctypes.int.ptr, ctypes.int.ptr, ctypes.int.ptr,
+      ctypes.unsigned_int.ptr
+    );
+    const warp = x11.declare(
+      "XWarpPointer", ctypes.default_abi, ctypes.int, Display, XWindow, XWindow,
+      ctypes.int, ctypes.int, ctypes.unsigned_int, ctypes.unsigned_int, ctypes.int, ctypes.int
+    );
+    const flush = x11.declare("XFlush", ctypes.default_abi, ctypes.int, Display);
+    const dpy = open(null);
+    if (dpy.isNull()) {
+      throw new Error("XOpenDisplay failed");
+    }
+    const root = rootOf(dpy);
+    const d = () => window.desktopToDeviceScale || 1;
+    return {
+      getCursor() {
+        const w1 = new XWindow(), w2 = new XWindow(), mask = new ctypes.unsigned_int();
+        const rx = new ctypes.int(), ry = new ctypes.int(), wx = new ctypes.int(), wy = new ctypes.int();
+        query(dpy, root, w1.address(), w2.address(), rx.address(), ry.address(), wx.address(), wy.address(), mask.address());
+        return { x: rx.value / d(), y: ry.value / d() };
+      },
+      warpCursor(x, y) {
+        warp(dpy, 0, root, 0, 0, 0, 0, Math.round(x * d()), Math.round(y * d()));
+        flush(dpy);
+      },
+    };
+  }
+
+  function macCursor(ctypes) {
+    const Point = new ctypes.StructType("Point", [{ x: ctypes.double }, { y: ctypes.double }]);
+
+    const objc = ctypes.open("/usr/lib/libobjc.A.dylib");
+    const id = ctypes.voidptr_t;
+    const getClass = objc.declare("objc_getClass", ctypes.default_abi, id, ctypes.char.ptr);
+    const getSel = objc.declare("sel_registerName", ctypes.default_abi, id, ctypes.char.ptr);
+    const msgSendPoint = objc.declare("objc_msgSend", ctypes.default_abi, Point, id, id);
+    const NSEvent = getClass("NSEvent");
+    const mouseLocation = getSel("mouseLocation");
+
+    const cg = ctypes.open("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics");
+    const warp = cg.declare("CGWarpMouseCursorPosition", ctypes.default_abi, ctypes.int32_t, Point);
+
+    return {
+      getCursor() {
+        const p = msgSendPoint(NSEvent, mouseLocation);
+        const primary = rectOf(screenManager.primaryScreen, "GetRectDisplayPix");
+        return { x: p.x, y: primary.h - p.y };
+      },
+      warpCursor(x, y) {
+        const pt = new Point();
+        pt.x = x;
+        pt.y = y;
+        warp(pt);
+      },
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -280,7 +341,7 @@
 
     // Cursor follows only by what the window actually moved, so it stops at edges too.
     if (bool("pipswipe.cursor_follows", true)) {
-      const m = macCursor();
+      const m = cursorControl();
       if (m) {
         const c = m.getCursor();
         m.warpCursor(c.x + moved.x, c.y + moved.y);

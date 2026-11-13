@@ -31,9 +31,14 @@
  *
  * Placement: the little window opens centered on the monitor where the mouse cursor is
  * when the link arrives (i.e. where you just clicked). The cursor position comes from
- * macOS (NSEvent.mouseLocation via js-ctypes). If that fails, it falls back to the
+ * macOS (NSEvent.mouseLocation via js-ctypes) or, on Linux, X11 (XQueryPointer; also under
+ * XWayland). If that fails, or on native Wayland, it falls back to the
  * monitor of the current Zen window. Little windows also no longer save their position,
  * so they can't drag the next little window (or a new normal window) to where you left them.
+ *
+ * Linux: Ctrl+O instead of Cmd+O, and the drag strip hands the drag to the window manager
+ * (window.beginWindowMove), which also works on Wayland. Native Wayland doesn't let a window
+ * place itself, so there the little window opens wherever the compositor puts it.
  *
  * Known limitations: if Zen isn't running, the first external link opens a normal
  * window (the OS launches Zen directly). Uses Firefox internals that can change.
@@ -42,7 +47,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "v6-drag-strip";
+  const VERSION = "v7-linux";
   const NAME_PREFIX = "arc-little-";
   const XHTML_NS = "http://www.w3.org/1999/xhtml";
 
@@ -51,6 +56,17 @@
   const log = (...a) => bool("arclittle.debug", false) && console.log("[little-arc]", ...a);
 
   const isLittle = () => (window.name || "").startsWith(NAME_PREFIX);
+  const OS = Services.appinfo?.OS ?? "Darwin";
+  const LINUX = OS === "Linux";
+
+  // "wayland", "x11", ... on Linux; "" if Gecko doesn't say.
+  function windowProtocol() {
+    try {
+      return String(Cc["@mozilla.org/gfx/info;1"].getService(Ci.nsIGfxInfo).windowProtocol || "");
+    } catch (e) {
+      return "";
+    }
+  }
 
   function tracker() {
     return (
@@ -79,10 +95,46 @@
 
   let mouseLocation = null;
 
+  // X11 (and XWayland): the pointer on the root window, in device pixels.
+  function x11CursorReader(ctypes) {
+    const x11 = ctypes.open("libX11.so.6");
+    const Display = ctypes.voidptr_t;
+    const XWindow = ctypes.unsigned_long;
+    const open = x11.declare("XOpenDisplay", ctypes.default_abi, Display, ctypes.char.ptr);
+    const rootOf = x11.declare("XDefaultRootWindow", ctypes.default_abi, XWindow, Display);
+    const query = x11.declare(
+      "XQueryPointer", ctypes.default_abi, ctypes.int, Display, XWindow,
+      XWindow.ptr, XWindow.ptr, ctypes.int.ptr, ctypes.int.ptr, ctypes.int.ptr, ctypes.int.ptr,
+      ctypes.unsigned_int.ptr
+    );
+    const dpy = open(null);
+    if (dpy.isNull()) {
+      throw new Error("XOpenDisplay failed");
+    }
+    const root = rootOf(dpy);
+    return () => {
+      const w1 = new XWindow(), w2 = new XWindow(), mask = new ctypes.unsigned_int();
+      const rx = new ctypes.int(), ry = new ctypes.int(), wx = new ctypes.int(), wy = new ctypes.int();
+      query(dpy, root, w1.address(), w2.address(), rx.address(), ry.address(), wx.address(), wy.address(), mask.address());
+      const d = window.desktopToDeviceScale || 1;
+      return { x: rx.value / d, y: ry.value / d };
+    };
+  }
+
   // Cursor position in Gecko desktop coordinates (origin top-left of the primary
   // display, y down). macOS reports it with origin bottom-left, y up, so we flip it.
   function getCursorPoint() {
+    if (LINUX && windowProtocol().startsWith("wayland")) {
+      log("Wayland: cursor position not available; using current window's monitor");
+      return null;
+    }
     try {
+      if (LINUX) {
+        mouseLocation ??= x11CursorReader(
+          globalThis.ctypes ?? ChromeUtils.importESModule("resource://gre/modules/ctypes.sys.mjs").ctypes
+        );
+        return mouseLocation();
+      }
       if (!mouseLocation) {
         const ctypes =
           globalThis.ctypes ??
@@ -397,12 +449,27 @@
 
   // Moves the window ourselves: a native -moz-window-dragging region over the page
   // area only caught some clicks, and it hides the hover/cursor feedback.
+  // Linux: the window manager does the move (beginWindowMove, from a mousedown), since a
+  // Wayland window can't move itself; X11 window managers handle it the same way.
   function addDragStrip() {
     const strip = document.createElementNS(XHTML_NS, "div");
     strip.id = "little-arc-drag";
+    const wmMove = LINUX && typeof window.beginWindowMove === "function";
+    if (wmMove) {
+      strip.addEventListener("mousedown", e => {
+        if (e.button !== 0) {
+          return;
+        }
+        try {
+          window.beginWindowMove(e);
+        } catch (err) {
+          console.error("[little-arc] beginWindowMove failed; strip can't drag", err);
+        }
+      });
+    }
     strip.addEventListener("pointerdown", e => {
-      if (e.button !== 0) {
-        return;
+      if (e.button !== 0 || wmMove) {
+        return; // wmMove: no preventDefault, so the mousedown above still fires
       }
       e.preventDefault();
       const dx = e.screenX - window.screenX;
@@ -430,13 +497,13 @@
   function addPromoteButton() {
     const btn = document.createElementNS(XHTML_NS, "button");
     btn.id = "little-arc-promote";
-    btn.textContent = "Open in Zen  \u2318O";
+    btn.textContent = LINUX ? "Open in Zen  Ctrl+O" : "Open in Zen  \u2318O";
     btn.addEventListener("click", promote);
     (document.body ?? document.documentElement).appendChild(btn);
   }
 
   function bindKeys() {
-    // Cmd+O is "Open File" by default. Swallow that command in this window only.
+    // Cmd+O (Linux: Ctrl+O) is "Open File" by default. Swallow that command in this window only.
     window.addEventListener(
       "command",
       e => {
@@ -453,7 +520,8 @@
     window.addEventListener(
       "keydown",
       e => {
-        const plainCmd = e.metaKey && !e.altKey && !e.ctrlKey && !e.shiftKey;
+        const accel = LINUX ? e.ctrlKey && !e.metaKey : e.metaKey && !e.ctrlKey;
+        const plainCmd = accel && !e.altKey && !e.shiftKey;
         if (plainCmd && e.key.toLowerCase() === "o") {
           e.preventDefault();
           promote();
